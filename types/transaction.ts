@@ -1,4 +1,8 @@
-// Re-export database types for consistency
+// Import types
+import type { Transaction } from '../lib/database';
+import type { AIExtractedTransaction } from '../lib/openai';
+
+// Re-export database types for consistency  
 export type { Transaction } from '../lib/database';
 export type { AIExtractedTransaction } from '../lib/openai';
 

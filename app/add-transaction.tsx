@@ -74,7 +74,7 @@ export default function AddTransactionScreen() {
   const handleSave = async () => {
     const validationError = validateTransaction(formData);
     if (validationError) {
-      Alert.alert('Validation Error', validationError);
+      Alert.alert('Lỗi Xác Thực', validationError);
       return;
     }
 
@@ -149,7 +149,7 @@ export default function AddTransactionScreen() {
       <ThemedView style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={tintColor} />
         <ThemedText style={styles.loadingText}>
-          {isEditing ? 'Loading transaction...' : 'Saving transaction...'}
+          {isEditing ? 'Đang tải giao dịch...' : 'Đang lưu giao dịch...'}
         </ThemedText>
       </ThemedView>
     );
@@ -170,7 +170,7 @@ export default function AddTransactionScreen() {
             <Ionicons name="close" size={24} color="white" />
           </Pressable>
           <ThemedText style={styles.headerTitle}>
-            {isEditing ? 'Edit Transaction' : 'Add Transaction'}
+            {isEditing ? 'Chỉnh Sửa Giao Dịch' : 'Thêm Giao Dịch'}
           </ThemedText>
           <Pressable 
             style={[styles.headerButton, { opacity: loading ? 0.5 : 1 }]} 
@@ -185,7 +185,7 @@ export default function AddTransactionScreen() {
       <ScrollView style={styles.form} showsVerticalScrollIndicator={false}>
         {/* Transaction Type Toggle */}
         <ThemedView style={styles.section}>
-          <ThemedText style={styles.sectionTitle}>Transaction Type</ThemedText>
+          <ThemedText style={styles.sectionTitle}>Loại Giao Dịch</ThemedText>
           <ThemedView style={styles.typeToggle}>
             <Pressable 
               style={[
@@ -205,7 +205,7 @@ export default function AddTransactionScreen() {
                   formData.type === 'expense' && styles.typeButtonTextActive
                 ]}
               >
-                Expense
+                Chi Tiêu
               </ThemedText>
             </Pressable>
             <Pressable 
@@ -226,7 +226,7 @@ export default function AddTransactionScreen() {
                   formData.type === 'income' && styles.typeButtonTextActive
                 ]}
               >
-                Income
+                Thu Nhập
               </ThemedText>
             </Pressable>
           </ThemedView>
@@ -234,7 +234,7 @@ export default function AddTransactionScreen() {
 
         {/* Amount */}
         <ThemedView style={styles.section}>
-          <ThemedText style={styles.sectionTitle}>Amount (VND)</ThemedText>
+          <ThemedText style={styles.sectionTitle}>Số Tiền (VNĐ)</ThemedText>
           <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}>
             <ThemedText style={styles.currencySymbol}>₫</ThemedText>
             <TextInput
@@ -248,19 +248,17 @@ export default function AddTransactionScreen() {
                 setFormData(prev => ({ ...prev, amount: numericText }));
               }}
               keyboardType="numeric"
-              fontSize={24}
-              fontWeight="bold"
             />
           </ThemedView>
         </ThemedView>
 
         {/* Description */}
         <ThemedView style={styles.section}>
-          <ThemedText style={styles.sectionTitle}>Description</ThemedText>
+          <ThemedText style={styles.sectionTitle}>Mô Tả</ThemedText>
           <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}>
             <TextInput
               style={[styles.textInput, { color: useThemeColor({}, 'text') }]}
-              placeholder="Enter transaction description"
+              placeholder="Nhập mô tả giao dịch"
               placeholderTextColor={useThemeColor({}, 'text') + '60'}
               value={formData.description}
               onChangeText={(text) => setFormData(prev => ({ ...prev, description: text }))}
@@ -272,7 +270,7 @@ export default function AddTransactionScreen() {
 
         {/* Category */}
         <ThemedView style={styles.section}>
-          <ThemedText style={styles.sectionTitle}>Category</ThemedText>
+          <ThemedText style={styles.sectionTitle}>Danh Mục</ThemedText>
           <Pressable 
             style={[styles.inputContainer, styles.pickerButton, { borderColor: tintColor + '30' }]}
             onPress={() => setShowCategoryPicker(true)}
@@ -287,7 +285,7 @@ export default function AddTransactionScreen() {
 
         {/* Date */}
         <ThemedView style={styles.section}>
-          <ThemedText style={styles.sectionTitle}>Date</ThemedText>
+          <ThemedText style={styles.sectionTitle}>Ngày</ThemedText>
           <Pressable 
             style={[styles.inputContainer, styles.pickerButton, { borderColor: tintColor + '30' }]}
             onPress={() => setShowDatePicker(true)}
@@ -356,7 +354,7 @@ export default function AddTransactionScreen() {
           onPress={handleCancel}
         >
           <ThemedText style={[styles.cancelButtonText, { color: tintColor }]}>
-            Cancel
+            Hủy
           </ThemedText>
         </Pressable>
         <Pressable 
@@ -365,7 +363,7 @@ export default function AddTransactionScreen() {
           disabled={loading}
         >
           <ThemedText style={styles.saveButtonText}>
-            {isEditing ? 'Update' : 'Save'}
+            {isEditing ? 'Cập Nhật' : 'Lưu'}
           </ThemedText>
         </Pressable>
       </ThemedView>

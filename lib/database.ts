@@ -12,73 +12,217 @@ export interface Transaction {
   updated_at?: string;
 }
 
+export interface DatabaseError {
+  code: string;
+  message: string;
+  originalError?: Error;
+}
+
+export class DatabaseException extends Error {
+  public code: string;
+  public originalError?: Error;
+
+  constructor(code: string, message: string, originalError?: Error) {
+    super(message);
+    this.name = 'DatabaseException';
+    this.code = code;
+    this.originalError = originalError;
+  }
+}
+
+// Validation functions
+const validateTransaction = (transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>): string | null => {
+  if (!transaction.amount || transaction.amount <= 0) {
+    return 'Số tiền phải lớn hơn 0';
+  }
+  
+  if (!transaction.description || transaction.description.trim().length === 0) {
+    return 'Mô tả không được để trống';
+  }
+  
+  if (!transaction.category || transaction.category.trim().length === 0) {
+    return 'Danh mục không được để trống';
+  }
+  
+  if (!transaction.date) {
+    return 'Ngày không được để trống';
+  }
+  
+  const date = new Date(transaction.date);
+  if (isNaN(date.getTime())) {
+    return 'Định dạng ngày không hợp lệ';
+  }
+  
+  if (!['income', 'expense'].includes(transaction.type)) {
+    return 'Loại giao dịch không hợp lệ';
+  }
+  
+  if (!['manual', 'ai'].includes(transaction.source)) {
+    return 'Nguồn giao dịch không hợp lệ';
+  }
+  
+  return null;
+};
+
 class DatabaseManager {
   private db: SQLite.SQLiteDatabase | null = null;
+  private isInitializing: boolean = false;
 
-  async init() {
+  async init(): Promise<void> {
+    if (this.db) {
+      return; // Already initialized
+    }
+    
+    if (this.isInitializing) {
+      // Wait for existing initialization to complete
+      while (this.isInitializing && !this.db) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      return;
+    }
+
     try {
+      this.isInitializing = true;
       this.db = await SQLite.openDatabaseAsync('finance_tracker.db');
+      
+      // Enable foreign key constraints and WAL mode for better performance
+      await this.db.execAsync('PRAGMA foreign_keys = ON');
+      await this.db.execAsync('PRAGMA journal_mode = WAL');
+      
       await this.createTables();
+      
       console.log('Database initialized successfully');
     } catch (error) {
       console.error('Database initialization failed:', error);
-      throw error;
+      this.db = null;
+      throw new DatabaseException('INIT_FAILED', 'Không thể khởi tạo cơ sở dữ liệu', error as Error);
+    } finally {
+      this.isInitializing = false;
     }
   }
 
-  private async createTables() {
-    if (!this.db) throw new Error('Database not initialized');
+  async close(): Promise<void> {
+    if (this.db) {
+      try {
+        await this.db.closeAsync();
+        this.db = null;
+        console.log('Database closed successfully');
+      } catch (error) {
+        console.error('Failed to close database:', error);
+        throw new DatabaseException('CLOSE_FAILED', 'Không thể đóng cơ sở dữ liệu', error as Error);
+      }
+    }
+  }
 
-    const createTransactionsTable = `
-      CREATE TABLE IF NOT EXISTS transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        amount REAL NOT NULL,
-        description TEXT NOT NULL,
-        category TEXT NOT NULL,
-        date TEXT NOT NULL,
-        type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
-        source TEXT NOT NULL CHECK (source IN ('manual', 'ai')),
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-      )
-    `;
+  private async ensureInitialized(): Promise<void> {
+    if (!this.db) {
+      await this.init();
+    }
+  }
 
-    await this.db.execAsync(createTransactionsTable);
+  private async createTables(): Promise<void> {
+    if (!this.db) throw new DatabaseException('DB_NOT_INITIALIZED', 'Cơ sở dữ liệu chưa được khởi tạo');
+
+    try {
+      const createTransactionsTable = `
+        CREATE TABLE IF NOT EXISTS transactions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          amount REAL NOT NULL CHECK (amount > 0),
+          description TEXT NOT NULL CHECK (length(trim(description)) > 0),
+          category TEXT NOT NULL CHECK (length(trim(category)) > 0),
+          date TEXT NOT NULL CHECK (date(date) IS NOT NULL),
+          type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
+          source TEXT NOT NULL CHECK (source IN ('manual', 'ai')),
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+      `;
+
+      const createIndexes = [
+        'CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(type)',
+        'CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category)',
+        'CREATE INDEX IF NOT EXISTS idx_transactions_source ON transactions(source)'
+      ];
+
+      await this.db.execAsync(createTransactionsTable);
+      
+      for (const indexQuery of createIndexes) {
+        await this.db.execAsync(indexQuery);
+      }
+
+      console.log('Database tables and indexes created successfully');
+    } catch (error) {
+      throw new DatabaseException('TABLE_CREATION_FAILED', 'Không thể tạo bảng dữ liệu', error as Error);
+    }
   }
 
   // CRUD Operations
   async addTransaction(transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>): Promise<number> {
-    if (!this.db) throw new Error('Database not initialized');
-
-    const { amount, description, category, date, type, source } = transaction;
+    await this.ensureInitialized();
     
-    const result = await this.db.runAsync(
-      `INSERT INTO transactions (amount, description, category, date, type, source) 
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [amount, description, category, date, type, source]
-    );
+    // Validate input
+    const validationError = validateTransaction(transaction);
+    if (validationError) {
+      throw new DatabaseException('VALIDATION_ERROR', validationError);
+    }
 
-    return result.lastInsertRowId;
+    try {
+      const { amount, description, category, date, type, source } = transaction;
+      
+      const result = await this.db!.runAsync(
+        `INSERT INTO transactions (amount, description, category, date, type, source) 
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [amount, description.trim(), category.trim(), date, type, source]
+      );
+
+      if (!result.lastInsertRowId) {
+        throw new DatabaseException('INSERT_FAILED', 'Không thể thêm giao dịch');
+      }
+
+      return result.lastInsertRowId;
+    } catch (error) {
+      if (error instanceof DatabaseException) {
+        throw error;
+      }
+      throw new DatabaseException('INSERT_ERROR', 'Lỗi khi thêm giao dịch', error as Error);
+    }
   }
 
   async getTransactions(limit?: number, offset?: number): Promise<Transaction[]> {
-    if (!this.db) throw new Error('Database not initialized');
-
-    let query = `SELECT * FROM transactions ORDER BY date DESC, created_at DESC`;
-    const params: any[] = [];
-
-    if (limit) {
-      query += ` LIMIT ?`;
-      params.push(limit);
-      
-      if (offset) {
-        query += ` OFFSET ?`;
-        params.push(offset);
+    await this.ensureInitialized();
+    
+    try {
+      // Validate input parameters
+      if (limit !== undefined && (limit < 0 || !Number.isInteger(limit))) {
+        throw new DatabaseException('INVALID_LIMIT', 'Giới hạn phải là số nguyên dương');
       }
-    }
+      
+      if (offset !== undefined && (offset < 0 || !Number.isInteger(offset))) {
+        throw new DatabaseException('INVALID_OFFSET', 'Offset phải là số nguyên không âm');
+      }
 
-    const result = await this.db.getAllAsync(query, params);
-    return result as Transaction[];
+      let query = `SELECT * FROM transactions ORDER BY date DESC, created_at DESC`;
+      const params: any[] = [];
+
+      if (limit) {
+        query += ` LIMIT ?`;
+        params.push(limit);
+        
+        if (offset) {
+          query += ` OFFSET ?`;
+          params.push(offset);
+        }
+      }
+
+      const result = await this.db!.getAllAsync(query, params);
+      return result as Transaction[];
+    } catch (error) {
+      if (error instanceof DatabaseException) {
+        throw error;
+      }
+      throw new DatabaseException('QUERY_ERROR', 'Lỗi khi truy vấn giao dịch', error as Error);
+    }
   }
 
   async getTransactionById(id: number): Promise<Transaction | null> {
@@ -214,13 +358,6 @@ class DatabaseManager {
 
     return ids;
   }
-
-  async close() {
-    if (this.db) {
-      await this.db.closeAsync();
-      this.db = null;
-    }
-  }
 }
 
 // Singleton instance
@@ -228,10 +365,8 @@ export const database = new DatabaseManager();
 
 // Helper function to format currency
 export const formatCurrency = (amount: number): string => {
-  return new Intl.NumberFormat('vi-VN', {
-    style: 'currency',
-    currency: 'VND',
-  }).format(amount);
+  const formatted = new Intl.NumberFormat('vi-VN').format(amount);
+  return `${formatted} ₫`;
 };
 
 // Helper function to format date

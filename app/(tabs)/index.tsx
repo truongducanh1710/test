@@ -94,7 +94,7 @@ export default function HomeScreen() {
       showsVerticalScrollIndicator={false}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[tintColor]} />}
     >
-      <StatusBar style="auto" />
+      <StatusBar barStyle="default" />
       
       {/* Header with Balance */}
       <LinearGradient

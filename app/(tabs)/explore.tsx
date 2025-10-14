@@ -1,149 +1,313 @@
-import { ScrollView, StyleSheet, Pressable, Dimensions, Alert } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { ScrollView, StyleSheet, Pressable, Dimensions, Alert, ActivityIndicator, Modal } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
+import { database, formatCurrency } from '@/lib/database';
+import { TransactionSummary, CategorySummary } from '@/types/transaction';
 
 const { width } = Dimensions.get('window');
 
-export default function ProfileScreen() {
+interface MonthlyData {
+  month: string;
+  income: number;
+  expense: number;
+  balance: number;
+}
+
+export default function FinanceScreen() {
+  const [loading, setLoading] = useState(true);
+  const [currentMonthSummary, setCurrentMonthSummary] = useState<TransactionSummary>({
+    totalIncome: 0,
+    totalExpense: 0,
+    balance: 0,
+    transactionCount: 0
+  });
+  const [topCategories, setTopCategories] = useState<CategorySummary[]>([]);
+  const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
+  const [showExportModal, setShowExportModal] = useState(false);
+  
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
+  const router = useRouter();
 
-  const handleEditProfile = () => {
-    Alert.alert('Edit Profile', 'Profile editing feature coming soon!');
+  // Load data when screen focuses
+  useFocusEffect(
+    useCallback(() => {
+      loadFinanceData();
+    }, [])
+  );
+
+  const loadFinanceData = async () => {
+    try {
+      setLoading(true);
+      await database.init();
+
+      // Get current month summary
+      const currentDate = new Date();
+      const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).toISOString().split('T')[0];
+      const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).toISOString().split('T')[0];
+
+      const totals = await database.getTotalsByType(startOfMonth, endOfMonth);
+      const transactions = await database.getTransactions(100);
+      const categories = await database.getTransactionsByCategory('expense');
+
+      setCurrentMonthSummary({
+        totalIncome: totals.income,
+        totalExpense: totals.expense,
+        balance: totals.income - totals.expense,
+        transactionCount: transactions.length
+      });
+
+      // Calculate percentages for top categories
+      const totalExpense = totals.expense;
+      const categoriesWithPercentage = categories.map(cat => ({
+        ...cat,
+        percentage: totalExpense > 0 ? (cat.total / totalExpense) * 100 : 0
+      })).slice(0, 3);
+
+      setTopCategories(categoriesWithPercentage);
+
+      // Get last 6 months data
+      const monthsData: MonthlyData[] = [];
+      for (let i = 5; i >= 0; i--) {
+        const monthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+        const monthStart = monthDate.toISOString().split('T')[0];
+        const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0).toISOString().split('T')[0];
+        
+        const monthTotals = await database.getTotalsByType(monthStart, monthEnd);
+        monthsData.push({
+          month: monthDate.toLocaleDateString('vi-VN', { month: 'short' }),
+          income: monthTotals.income,
+          expense: monthTotals.expense,
+          balance: monthTotals.income - monthTotals.expense
+        });
+      }
+
+      setMonthlyData(monthsData);
+    } catch (error) {
+      console.error('Error loading finance data:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleSetting = (setting: string) => {
-    Alert.alert('Settings', `${setting} clicked!`);
+  const handleExportData = () => {
+    Alert.alert('Xuất Dữ Liệu', 'Tính năng xuất dữ liệu sẽ ra mắt sớm!');
+    setShowExportModal(false);
   };
+
+  const handleBudgetManagement = () => {
+    Alert.alert('Quản Lý Ngân Sách', 'Tính năng quản lý ngân sách sẽ ra mắt sớm!');
+  };
+
+  const handleFinancialGoals = () => {
+    Alert.alert('Mục Tiêu Tài Chính', 'Tính năng mục tiêu tài chính sẽ ra mắt sớm!');
+  };
+
+  if (loading) {
+    return (
+      <ThemedView style={[styles.container, { backgroundColor }]}>
+        <ActivityIndicator size="large" color={tintColor} style={styles.loader} />
+        <ThemedText style={styles.loadingText}>Đang tải dữ liệu tài chính...</ThemedText>
+      </ThemedView>
+    );
+  }
 
   return (
     <ScrollView style={[styles.container, { backgroundColor }]} showsVerticalScrollIndicator={false}>
       
-      {/* Profile Header with Gradient */}
+      {/* Financial Overview Header */}
       <LinearGradient
-        colors={['#4facfe', '#00f2fe']}
-        style={styles.profileHeader}
+        colors={['#667eea', '#764ba2']}
+        style={styles.financeHeader}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
       >
-        <ThemedView style={styles.avatarContainer}>
-          <ThemedView style={styles.avatar}>
-            <Ionicons name="person" size={60} color="white" />
-          </ThemedView>
-          <ThemedText style={styles.userName}>John Doe</ThemedText>
-          <ThemedText style={styles.userEmail}>john.doe@example.com</ThemedText>
-          
-          <Pressable style={styles.editButton} onPress={handleEditProfile}>
-            <Ionicons name="pencil" size={16} color="white" />
-            <ThemedText style={styles.editButtonText}>Edit Profile</ThemedText>
-          </Pressable>
+        <ThemedView style={styles.headerContent}>
+          <Ionicons name="analytics" size={48} color="white" style={styles.headerIcon} />
+          <ThemedText style={styles.headerTitle}>Báo Cáo Tài Chính</ThemedText>
+          <ThemedText style={styles.headerSubtitle}>
+            Tháng {new Date().toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })}
+          </ThemedText>
+          <ThemedText style={styles.balanceText}>
+            {formatCurrency(currentMonthSummary.balance)}
+          </ThemedText>
+          <ThemedText style={styles.balanceLabel}>Số Dư Hiện Tại</ThemedText>
         </ThemedView>
       </LinearGradient>
 
-      {/* Stats Cards */}
-      <ThemedView style={styles.statsContainer}>
-        <ThemedView style={styles.statCard}>
-          <ThemedText style={styles.statNumber}>127</ThemedText>
-          <ThemedText style={styles.statLabel}>Projects</ThemedText>
+      {/* Financial Summary Cards */}
+      <ThemedView style={styles.summaryContainer}>
+        <ThemedView style={[styles.summaryCard, { backgroundColor: '#22c55e' }]}>
+          <Ionicons name="arrow-up" size={24} color="white" />
+          <ThemedText style={styles.summaryAmount}>{formatCurrency(currentMonthSummary.totalIncome)}</ThemedText>
+          <ThemedText style={styles.summaryLabel}>Thu Nhập Tháng Này</ThemedText>
         </ThemedView>
-        <ThemedView style={styles.statCard}>
-          <ThemedText style={styles.statNumber}>1.2K</ThemedText>
-          <ThemedText style={styles.statLabel}>Followers</ThemedText>
-        </ThemedView>
-        <ThemedView style={styles.statCard}>
-          <ThemedText style={styles.statNumber}>856</ThemedText>
-          <ThemedText style={styles.statLabel}>Following</ThemedText>
+        <ThemedView style={[styles.summaryCard, { backgroundColor: '#ef4444' }]}>
+          <Ionicons name="arrow-down" size={24} color="white" />
+          <ThemedText style={styles.summaryAmount}>{formatCurrency(currentMonthSummary.totalExpense)}</ThemedText>
+          <ThemedText style={styles.summaryLabel}>Chi Tiêu Tháng Này</ThemedText>
         </ThemedView>
       </ThemedView>
 
-      {/* Menu Items */}
-      <ThemedView style={styles.menuContainer}>
-        <ThemedText type="title" style={styles.menuTitle}>Account Settings</ThemedText>
+      {/* Top Categories */}
+      {topCategories.length > 0 && (
+        <ThemedView style={styles.categoriesContainer}>
+          <ThemedText type="title" style={styles.sectionTitle}>Danh Mục Chi Tiêu Hàng Đầu</ThemedText>
+          {topCategories.map((category) => (
+            <ThemedView key={category.category} style={styles.categoryItem}>
+              <ThemedView style={styles.categoryInfo}>
+                <ThemedText style={styles.categoryName}>{category.category}</ThemedText>
+                <ThemedText style={styles.categoryAmount}>
+                  {formatCurrency(category.total)}
+                </ThemedText>
+              </ThemedView>
+              <ThemedView style={styles.categoryBar}>
+                <ThemedView 
+                  style={[
+                    styles.categoryBarFill, 
+                    { 
+                      width: `${category.percentage}%`,
+                      backgroundColor: tintColor 
+                    }
+                  ]} 
+                />
+              </ThemedView>
+              <ThemedText style={styles.categoryPercentage}>
+                {category.percentage.toFixed(1)}%
+              </ThemedText>
+            </ThemedView>
+          ))}
+        </ThemedView>
+      )}
+
+      {/* Monthly Trends */}
+      <ThemedView style={styles.trendsContainer}>
+        <ThemedText type="title" style={styles.sectionTitle}>Xu Hướng 6 Tháng Gần Đây</ThemedText>
+        <ThemedView style={styles.trendsChart}>
+          {monthlyData.map((month, index) => {
+            const maxAmount = Math.max(...monthlyData.map(m => Math.max(m.income, m.expense)));
+            const incomeHeight = maxAmount > 0 ? (month.income / maxAmount) * 100 : 0;
+            const expenseHeight = maxAmount > 0 ? (month.expense / maxAmount) * 100 : 0;
+            
+            return (
+              <ThemedView key={index} style={styles.chartMonth}>
+                <ThemedView style={styles.chartBars}>
+                  <ThemedView 
+                    style={[
+                      styles.chartBar,
+                      { height: `${incomeHeight}%`, backgroundColor: '#22c55e' }
+                    ]} 
+                  />
+                  <ThemedView 
+                    style={[
+                      styles.chartBar,
+                      { height: `${expenseHeight}%`, backgroundColor: '#ef4444' }
+                    ]} 
+                  />
+                </ThemedView>
+                <ThemedText style={styles.chartLabel}>{month.month}</ThemedText>
+              </ThemedView>
+            );
+          })}
+        </ThemedView>
+        <ThemedView style={styles.chartLegend}>
+          <ThemedView style={styles.legendItem}>
+            <ThemedView style={[styles.legendColor, { backgroundColor: '#22c55e' }]} />
+            <ThemedText style={styles.legendText}>Thu Nhập</ThemedText>
+          </ThemedView>
+          <ThemedView style={styles.legendItem}>
+            <ThemedView style={[styles.legendColor, { backgroundColor: '#ef4444' }]} />
+            <ThemedText style={styles.legendText}>Chi Tiêu</ThemedText>
+          </ThemedView>
+        </ThemedView>
+      </ThemedView>
+
+      {/* Financial Tools */}
+      <ThemedView style={styles.toolsContainer}>
+        <ThemedText type="title" style={styles.sectionTitle}>Công Cụ Tài Chính</ThemedText>
         
-        <Pressable 
-          style={[styles.menuItem, { borderBottomColor: tintColor + '20' }]}
-          onPress={() => handleSetting('Personal Information')}
-        >
-          <ThemedView style={[styles.menuIconContainer, { backgroundColor: '#ff6b6b' }]}>
-            <Ionicons name="person-outline" size={20} color="white" />
-          </ThemedView>
-          <ThemedView style={styles.menuTextContainer}>
-            <ThemedText style={styles.menuItemTitle}>Personal Information</ThemedText>
-            <ThemedText style={styles.menuItemSubtitle}>Update your details</ThemedText>
-          </ThemedView>
-          <Ionicons name="chevron-forward" size={20} color={tintColor} />
-        </Pressable>
+        <ThemedView style={styles.toolsGrid}>
+          <Pressable 
+            style={[styles.toolCard, { backgroundColor: '#6366f1' }]}
+            onPress={handleBudgetManagement}
+          >
+            <Ionicons name="wallet-outline" size={32} color="white" />
+            <ThemedText style={styles.toolTitle}>Ngân Sách</ThemedText>
+            <ThemedText style={styles.toolSubtitle}>Quản lý chi tiêu</ThemedText>
+          </Pressable>
 
-        <Pressable 
-          style={[styles.menuItem, { borderBottomColor: tintColor + '20' }]}
-          onPress={() => handleSetting('Security')}
-        >
-          <ThemedView style={[styles.menuIconContainer, { backgroundColor: '#4ecdc4' }]}>
-            <Ionicons name="shield-outline" size={20} color="white" />
-          </ThemedView>
-          <ThemedView style={styles.menuTextContainer}>
-            <ThemedText style={styles.menuItemTitle}>Security</ThemedText>
-            <ThemedText style={styles.menuItemSubtitle}>Password & privacy</ThemedText>
-          </ThemedView>
-          <Ionicons name="chevron-forward" size={20} color={tintColor} />
-        </Pressable>
+          <Pressable 
+            style={[styles.toolCard, { backgroundColor: '#8b5cf6' }]}
+            onPress={handleFinancialGoals}
+          >
+            <Ionicons name="flag-outline" size={32} color="white" />
+            <ThemedText style={styles.toolTitle}>Mục Tiêu</ThemedText>
+            <ThemedText style={styles.toolSubtitle}>Kế hoạch tài chính</ThemedText>
+          </Pressable>
 
-        <Pressable 
-          style={[styles.menuItem, { borderBottomColor: tintColor + '20' }]}
-          onPress={() => handleSetting('Notifications')}
-        >
-          <ThemedView style={[styles.menuIconContainer, { backgroundColor: '#667eea' }]}>
-            <Ionicons name="notifications-outline" size={20} color="white" />
-          </ThemedView>
-          <ThemedView style={styles.menuTextContainer}>
-            <ThemedText style={styles.menuItemTitle}>Notifications</ThemedText>
-            <ThemedText style={styles.menuItemSubtitle}>Manage your alerts</ThemedText>
-          </ThemedView>
-          <Ionicons name="chevron-forward" size={20} color={tintColor} />
-        </Pressable>
+          <Pressable 
+            style={[styles.toolCard, { backgroundColor: '#06b6d4' }]}
+            onPress={() => setShowExportModal(true)}
+          >
+            <Ionicons name="download-outline" size={32} color="white" />
+            <ThemedText style={styles.toolTitle}>Xuất Dữ Liệu</ThemedText>
+            <ThemedText style={styles.toolSubtitle}>Backup & báo cáo</ThemedText>
+          </Pressable>
 
-        <Pressable 
-          style={[styles.menuItem, { borderBottomColor: tintColor + '20' }]}
-          onPress={() => handleSetting('Appearance')}
-        >
-          <ThemedView style={[styles.menuIconContainer, { backgroundColor: '#f093fb' }]}>
-            <Ionicons name="color-palette-outline" size={20} color="white" />
-          </ThemedView>
-          <ThemedView style={styles.menuTextContainer}>
-            <ThemedText style={styles.menuItemTitle}>Appearance</ThemedText>
-            <ThemedText style={styles.menuItemSubtitle}>Theme & display</ThemedText>
-          </ThemedView>
-          <Ionicons name="chevron-forward" size={20} color={tintColor} />
-        </Pressable>
-
-        <Pressable 
-          style={[styles.menuItem, { borderBottomWidth: 0 }]}
-          onPress={() => handleSetting('Help & Support')}
-        >
-          <ThemedView style={[styles.menuIconContainer, { backgroundColor: '#ffa726' }]}>
-            <Ionicons name="help-circle-outline" size={20} color="white" />
-          </ThemedView>
-          <ThemedView style={styles.menuTextContainer}>
-            <ThemedText style={styles.menuItemTitle}>Help & Support</ThemedText>
-            <ThemedText style={styles.menuItemSubtitle}>Get assistance</ThemedText>
-          </ThemedView>
-          <Ionicons name="chevron-forward" size={20} color={tintColor} />
-        </Pressable>
+          <Pressable 
+            style={[styles.toolCard, { backgroundColor: '#10b981' }]}
+            onPress={() => router.push('/camera')}
+          >
+            <Ionicons name="camera-outline" size={32} color="white" />
+            <ThemedText style={styles.toolTitle}>Quét Sao Kê</ThemedText>
+            <ThemedText style={styles.toolSubtitle}>AI tự động</ThemedText>
+          </Pressable>
+        </ThemedView>
       </ThemedView>
 
-      {/* Logout Button */}
-      <ThemedView style={styles.logoutContainer}>
-        <Pressable 
-          style={styles.logoutButton}
-          onPress={() => Alert.alert('Logout', 'Are you sure you want to logout?')}
-        >
-          <Ionicons name="log-out-outline" size={24} color="#ff6b6b" />
-          <ThemedText style={styles.logoutText}>Logout</ThemedText>
-        </Pressable>
-      </ThemedView>
+      {/* Export Data Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={showExportModal}
+        onRequestClose={() => setShowExportModal(false)}
+      >
+        <ThemedView style={styles.modalOverlay}>
+          <ThemedView style={[styles.modalContent, { backgroundColor }]}>
+            <ThemedView style={styles.modalHeader}>
+              <ThemedText style={styles.modalTitle}>Xuất Dữ Liệu</ThemedText>
+              <Pressable onPress={() => setShowExportModal(false)}>
+                <Ionicons name="close" size={24} color={tintColor} />
+              </Pressable>
+            </ThemedView>
+            
+            <ThemedView style={styles.exportOptions}>
+              <Pressable style={styles.exportOption} onPress={handleExportData}>
+                <Ionicons name="document-text-outline" size={24} color={tintColor} />
+                <ThemedText style={styles.exportOptionText}>Xuất CSV</ThemedText>
+                <ThemedText style={styles.exportOptionSubtext}>Tất cả giao dịch</ThemedText>
+              </Pressable>
+              
+              <Pressable style={styles.exportOption} onPress={handleExportData}>
+                <Ionicons name="document-outline" size={24} color={tintColor} />
+                <ThemedText style={styles.exportOptionText}>Xuất PDF</ThemedText>
+                <ThemedText style={styles.exportOptionSubtext}>Báo cáo tháng này</ThemedText>
+              </Pressable>
+              
+              <Pressable style={styles.exportOption} onPress={handleExportData}>
+                <Ionicons name="cloud-upload-outline" size={24} color={tintColor} />
+                <ThemedText style={styles.exportOptionText}>Backup Dữ Liệu</ThemedText>
+                <ThemedText style={styles.exportOptionSubtext}>Lưu trữ an toàn</ThemedText>
+              </Pressable>
+            </ThemedView>
+          </ThemedView>
+        </ThemedView>
+      </Modal>
 
       <ThemedView style={styles.bottomSpacer} />
     </ScrollView>
@@ -154,145 +318,274 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  profileHeader: {
-    height: 280,
+  loader: {
+    marginTop: 100,
+  },
+  loadingText: {
+    textAlign: 'center',
+    marginTop: 20,
+    opacity: 0.7,
+  },
+  financeHeader: {
+    height: 220,
     justifyContent: 'center',
     alignItems: 'center',
     paddingTop: 60,
   },
-  avatarContainer: {
+  headerContent: {
     backgroundColor: 'transparent',
     alignItems: 'center',
   },
-  avatar: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    justifyContent: 'center',
-    alignItems: 'center',
+  headerIcon: {
     marginBottom: 15,
-    borderWidth: 4,
-    borderColor: 'white',
   },
-  userName: {
-    fontSize: 28,
+  headerTitle: {
+    fontSize: 24,
     fontWeight: 'bold',
     color: 'white',
     marginBottom: 5,
   },
-  userEmail: {
+  headerSubtitle: {
     fontSize: 16,
     color: 'rgba(255, 255, 255, 0.8)',
-    marginBottom: 20,
+    marginBottom: 15,
   },
-  editButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 25,
-    borderWidth: 1,
-    borderColor: 'white',
-  },
-  editButtonText: {
+  balanceText: {
+    fontSize: 32,
+    fontWeight: 'bold',
     color: 'white',
-    marginLeft: 8,
-    fontWeight: '600',
+    marginBottom: 5,
   },
-  statsContainer: {
+  balanceLabel: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.8)',
+  },
+  summaryContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginTop: -40,
+    justifyContent: 'space-between',
+    marginTop: -30,
     marginHorizontal: 20,
     backgroundColor: 'transparent',
   },
-  statCard: {
-    backgroundColor: 'white',
+  summaryCard: {
+    flex: 1,
     borderRadius: 15,
     padding: 20,
     alignItems: 'center',
-    minWidth: 100,
+    marginHorizontal: 5,
     elevation: 3,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 3.84,
   },
-  statNumber: {
-    fontSize: 24,
+  summaryAmount: {
+    fontSize: 16,
     fontWeight: 'bold',
-    color: '#4facfe',
+    color: 'white',
+    marginVertical: 5,
+    textAlign: 'center',
   },
-  statLabel: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 5,
+  summaryLabel: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.9)',
+    textAlign: 'center',
   },
-  menuContainer: {
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 15,
+  },
+  categoriesContainer: {
     margin: 20,
     backgroundColor: 'white',
     borderRadius: 15,
+    padding: 20,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
     shadowRadius: 2,
   },
-  menuTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    padding: 20,
-    paddingBottom: 10,
-  },
-  menuItem: {
+  categoryItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
+    marginBottom: 15,
     backgroundColor: 'transparent',
   },
-  menuIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 15,
-  },
-  menuTextContainer: {
+  categoryInfo: {
     flex: 1,
     backgroundColor: 'transparent',
   },
-  menuItemTitle: {
-    fontSize: 16,
+  categoryName: {
+    fontSize: 14,
     fontWeight: '600',
     marginBottom: 2,
   },
-  menuItemSubtitle: {
-    fontSize: 14,
-    opacity: 0.6,
+  categoryAmount: {
+    fontSize: 12,
+    opacity: 0.7,
   },
-  logoutContainer: {
+  categoryBar: {
+    flex: 2,
+    height: 6,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 3,
+    marginHorizontal: 15,
+    overflow: 'hidden',
+  },
+  categoryBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  categoryPercentage: {
+    fontSize: 12,
+    fontWeight: '600',
+    minWidth: 35,
+    textAlign: 'right',
+  },
+  trendsContainer: {
     margin: 20,
+    backgroundColor: 'white',
+    borderRadius: 15,
+    padding: 20,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+  },
+  trendsChart: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    height: 120,
+    marginVertical: 20,
     backgroundColor: 'transparent',
   },
-  logoutButton: {
+  chartMonth: {
+    flex: 1,
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+  },
+  chartBars: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    height: 80,
+    marginBottom: 10,
+    backgroundColor: 'transparent',
+  },
+  chartBar: {
+    width: 8,
+    marginHorizontal: 1,
+    borderRadius: 4,
+    minHeight: 4,
+  },
+  chartLabel: {
+    fontSize: 10,
+    opacity: 0.7,
+  },
+  chartLegend: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: 15,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#ff6b6b',
+    marginHorizontal: 10,
     backgroundColor: 'transparent',
   },
-  logoutText: {
-    color: '#ff6b6b',
-    marginLeft: 10,
+  legendColor: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 5,
+  },
+  legendText: {
+    fontSize: 12,
+    opacity: 0.7,
+  },
+  toolsContainer: {
+    margin: 20,
+    backgroundColor: 'white',
+    borderRadius: 15,
+    padding: 20,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+  },
+  toolsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    backgroundColor: 'transparent',
+  },
+  toolCard: {
+    width: '48%',
+    borderRadius: 12,
+    padding: 15,
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  toolTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: 'white',
+    marginTop: 10,
+    marginBottom: 5,
+  },
+  toolSubtitle: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.8)',
+    textAlign: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    width: '90%',
+    borderRadius: 20,
+    padding: 20,
+    elevation: 5,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    backgroundColor: 'transparent',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  exportOptions: {
+    backgroundColor: 'transparent',
+  },
+  exportOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    marginBottom: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+  },
+  exportOptionText: {
+    flex: 1,
     fontSize: 16,
     fontWeight: '600',
+    marginLeft: 15,
+  },
+  exportOptionSubtext: {
+    fontSize: 12,
+    opacity: 0.6,
   },
   bottomSpacer: {
     height: 50,

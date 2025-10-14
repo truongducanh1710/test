@@ -215,7 +215,7 @@ export default function CameraScreen() {
 
   return (
     <View style={styles.container}>
-      <StatusBar style="light" />
+      <StatusBar barStyle="light-content" />
       
       {/* Camera View */}
       <CameraView 

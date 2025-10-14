@@ -40,6 +40,10 @@ export default function TransactionsScreen() {
   const [filters, setFilters] = useState<TransactionFilters>({});
   const [sortOptions, setSortOptions] = useState<SortOptions>({ field: 'date', order: 'desc' });
   const [showFilters, setShowFilters] = useState(false);
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedTransactions, setSelectedTransactions] = useState<Set<number>>(new Set());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [datePickerType, setDatePickerType] = useState<'from' | 'to'>('from');
   
   const router = useRouter();
   const backgroundColor = useThemeColor({}, 'background');
@@ -148,7 +152,44 @@ export default function TransactionsScreen() {
   }, []);
 
   const handleTransactionPress = (transaction: Transaction) => {
-    router.push(`/add-transaction?id=${transaction.id}`);
+    if (isSelectionMode) {
+      toggleTransactionSelection(transaction.id!);
+    } else {
+      router.push(`/add-transaction?id=${transaction.id}`);
+    }
+  };
+
+  const handleTransactionLongPress = (transaction: Transaction) => {
+    if (!isSelectionMode) {
+      setIsSelectionMode(true);
+      setSelectedTransactions(new Set([transaction.id!]));
+    } else {
+      handleDeleteTransaction(transaction);
+    }
+  };
+
+  const toggleTransactionSelection = (id: number) => {
+    const newSelection = new Set(selectedTransactions);
+    if (newSelection.has(id)) {
+      newSelection.delete(id);
+    } else {
+      newSelection.add(id);
+    }
+    setSelectedTransactions(newSelection);
+    
+    if (newSelection.size === 0) {
+      setIsSelectionMode(false);
+    }
+  };
+
+  const selectAllTransactions = () => {
+    const allIds = new Set(transactions.map(t => t.id!));
+    setSelectedTransactions(allIds);
+  };
+
+  const deselectAllTransactions = () => {
+    setSelectedTransactions(new Set());
+    setIsSelectionMode(false);
   };
 
   const handleDeleteTransaction = async (transaction: Transaction) => {
@@ -171,6 +212,46 @@ export default function TransactionsScreen() {
     );
   };
 
+  const handleBulkDelete = () => {
+    Alert.alert(
+      'Xác nhận xóa',
+      `Bạn có chắc chắn muốn xóa ${selectedTransactions.size} giao dịch đã chọn?`,
+      [
+        { text: 'Hủy', style: 'cancel' },
+        { text: 'Xóa', style: 'destructive', onPress: async () => {
+          try {
+            for (const id of selectedTransactions) {
+              await database.deleteTransaction(id);
+            }
+            await loadTransactions();
+            setSelectedTransactions(new Set());
+            setIsSelectionMode(false);
+            Alert.alert('Thành công', `Đã xóa ${selectedTransactions.size} giao dịch`);
+          } catch (error) {
+            console.error('Error deleting transactions:', error);
+            Alert.alert('Lỗi', 'Không thể xóa các giao dịch');
+          }
+        }}
+      ]
+    );
+  };
+
+  const applyDateFilter = (field: 'from' | 'to', date: Date) => {
+    const dateString = date.toISOString().split('T')[0];
+    setFilters(prev => ({
+      ...prev,
+      [field === 'from' ? 'dateFrom' : 'dateTo']: dateString
+    }));
+  };
+
+  const clearDateFilter = (field: 'from' | 'to') => {
+    setFilters(prev => {
+      const newFilters = { ...prev };
+      delete newFilters[field === 'from' ? 'dateFrom' : 'dateTo'];
+      return newFilters;
+    });
+  };
+
   const clearFilters = () => {
     setFilters({});
     setSearchTerm('');
@@ -182,82 +263,127 @@ export default function TransactionsScreen() {
     return filterCount + (searchTerm ? 1 : 0);
   };
 
-  const renderTransaction = ({ item }: { item: Transaction }) => (
-    <TransactionCard
-      transaction={item}
-      onPress={handleTransactionPress}
-      onLongPress={handleDeleteTransaction}
-    />
-  );
+  const renderTransaction = ({ item }: { item: Transaction }) => {
+    const isSelected = selectedTransactions.has(item.id!);
+    
+    return (
+      <ThemedView style={[styles.transactionRow, isSelected && styles.selectedTransactionRow]}>
+        {isSelectionMode && (
+          <Pressable 
+            style={styles.selectionCheckbox}
+            onPress={() => toggleTransactionSelection(item.id!)}
+          >
+            <Ionicons 
+              name={isSelected ? 'checkbox' : 'square-outline'} 
+              size={24} 
+              color={isSelected ? tintColor : '#666'} 
+            />
+          </Pressable>
+        )}
+        <ThemedView style={styles.transactionCardWrapper}>
+          <TransactionCard
+            transaction={item}
+            onPress={handleTransactionPress}
+            onLongPress={handleTransactionLongPress}
+          />
+        </ThemedView>
+      </ThemedView>
+    );
+  };
 
   const renderHeader = () => (
     <ThemedView style={styles.header}>
       <LinearGradient
-        colors={['#667eea', '#764ba2']}
+        colors={isSelectionMode ? ['#ef4444', '#dc2626'] : ['#667eea', '#764ba2']}
         style={styles.headerGradient}
       >
         <ThemedView style={styles.headerContent}>
-          <Pressable style={styles.backButton} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="white" />
+          <Pressable style={styles.backButton} onPress={() => {
+            if (isSelectionMode) {
+              deselectAllTransactions();
+            } else {
+              router.back();
+            }
+          }}>
+            <Ionicons name={isSelectionMode ? "close" : "arrow-back"} size={24} color="white" />
           </Pressable>
-          <ThemedText style={styles.headerTitle}>Transactions</ThemedText>
-          <Pressable style={styles.headerButton} onPress={() => router.push('/camera')}>
-            <Ionicons name="camera" size={24} color="white" />
-          </Pressable>
+          
+          <ThemedText style={styles.headerTitle}>
+            {isSelectionMode ? `${selectedTransactions.size} đã chọn` : 'Giao Dịch'}
+          </ThemedText>
+          
+          {isSelectionMode ? (
+            <ThemedView style={styles.selectionActions}>
+              <Pressable style={styles.headerAction} onPress={selectAllTransactions}>
+                <Ionicons name="checkmark-done" size={24} color="white" />
+              </Pressable>
+              <Pressable style={styles.headerAction} onPress={handleBulkDelete}>
+                <Ionicons name="trash" size={24} color="white" />
+              </Pressable>
+            </ThemedView>
+          ) : (
+            <Pressable style={styles.headerButton} onPress={() => router.push('/camera')}>
+              <Ionicons name="camera" size={24} color="white" />
+            </Pressable>
+          )}
         </ThemedView>
       </LinearGradient>
 
-      {/* Search and Filters */}
-      <ThemedView style={styles.searchContainer}>
-        <ThemedView style={[styles.searchBox, { borderColor: tintColor + '30' }]}>
-          <Ionicons name="search" size={20} color={tintColor} />
-          <TextInput
-            style={[styles.searchInput, { color: useThemeColor({}, 'text') }]}
-            placeholder="Search transactions..."
-            placeholderTextColor={useThemeColor({}, 'text') + '60'}
-            value={searchTerm}
-            onChangeText={setSearchTerm}
-          />
-          {searchTerm ? (
-            <Pressable onPress={() => setSearchTerm('')}>
-              <Ionicons name="close-circle" size={20} color={tintColor} />
-            </Pressable>
-          ) : null}
-        </ThemedView>
-
-        <Pressable 
-          style={[styles.filterButton, { backgroundColor: tintColor }]} 
-          onPress={() => setShowFilters(true)}
-        >
-          <Ionicons name="filter" size={20} color="white" />
-          {getFilteredCount() > 0 && (
-            <ThemedView style={styles.filterBadge}>
-              <ThemedText style={styles.filterBadgeText}>{getFilteredCount()}</ThemedText>
+      {!isSelectionMode && (
+        <>
+          {/* Search and Filters */}
+          <ThemedView style={styles.searchContainer}>
+            <ThemedView style={[styles.searchBox, { borderColor: tintColor + '30' }]}>
+              <Ionicons name="search" size={20} color={tintColor} />
+              <TextInput
+                style={[styles.searchInput, { color: useThemeColor({}, 'text') }]}
+                placeholder="Tìm kiếm giao dịch..."
+                placeholderTextColor={useThemeColor({}, 'text') + '60'}
+                value={searchTerm}
+                onChangeText={setSearchTerm}
+              />
+              {searchTerm ? (
+                <Pressable onPress={() => setSearchTerm('')}>
+                  <Ionicons name="close-circle" size={20} color={tintColor} />
+                </Pressable>
+              ) : null}
             </ThemedView>
-          )}
-        </Pressable>
-      </ThemedView>
 
-      {/* Quick Stats */}
-      <ThemedView style={styles.statsRow}>
-        <ThemedText style={styles.transactionCount}>
-          {transactions.length} transaction{transactions.length !== 1 ? 's' : ''}
-        </ThemedText>
-        {getFilteredCount() > 0 && (
-          <Pressable style={styles.clearFiltersButton} onPress={clearFilters}>
-            <ThemedText style={[styles.clearFiltersText, { color: tintColor }]}>
-              Clear filters
+            <Pressable 
+              style={[styles.filterButton, { backgroundColor: tintColor }]} 
+              onPress={() => setShowFilters(true)}
+            >
+              <Ionicons name="filter" size={20} color="white" />
+              {getFilteredCount() > 0 && (
+                <ThemedView style={styles.filterBadge}>
+                  <ThemedText style={styles.filterBadgeText}>{getFilteredCount()}</ThemedText>
+                </ThemedView>
+              )}
+            </Pressable>
+          </ThemedView>
+
+          {/* Quick Stats */}
+          <ThemedView style={styles.statsRow}>
+            <ThemedText style={styles.transactionCount}>
+              {transactions.length} giao dịch
             </ThemedText>
-          </Pressable>
-        )}
-      </ThemedView>
+            {getFilteredCount() > 0 && (
+              <Pressable style={styles.clearFiltersButton} onPress={clearFilters}>
+                <ThemedText style={[styles.clearFiltersText, { color: tintColor }]}>
+                  Xóa bộ lọc
+                </ThemedText>
+              </Pressable>
+            )}
+          </ThemedView>
+        </>
+      )}
     </ThemedView>
   );
 
   const renderEmptyState = () => (
     <ThemedView style={styles.emptyState}>
       <Ionicons name="receipt-outline" size={64} color={tintColor + '60'} />
-      <ThemedText style={styles.emptyTitle}>No Transactions Found</ThemedText>
+      <ThemedText style={styles.emptyTitle}>Không Tìm Thấy Giao Dịch</ThemedText>
       <ThemedText style={styles.emptySubtitle}>
         {searchTerm || getFilteredCount() > 0 
           ? 'Try adjusting your search or filters'
@@ -269,7 +395,7 @@ export default function TransactionsScreen() {
         onPress={() => router.push('/camera')}
       >
         <Ionicons name="camera" size={20} color="white" />
-        <ThemedText style={styles.emptyButtonText}>Scan Statement</ThemedText>
+        <ThemedText style={styles.emptyButtonText}>Quét Sao Kê</ThemedText>
       </Pressable>
     </ThemedView>
   );
@@ -278,7 +404,7 @@ export default function TransactionsScreen() {
     return (
       <ThemedView style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={tintColor} />
-        <ThemedText style={styles.loadingText}>Loading transactions...</ThemedText>
+        <ThemedText style={styles.loadingText}>Đang tải giao dịch...</ThemedText>
       </ThemedView>
     );
   }
@@ -307,20 +433,20 @@ export default function TransactionsScreen() {
       >
         <ThemedView style={[styles.modalContainer, { backgroundColor }]}>
           <ThemedView style={styles.modalHeader}>
-            <ThemedText style={styles.modalTitle}>Filters & Sort</ThemedText>
+            <ThemedText style={styles.modalTitle}>Lọc & Sắp Xếp</ThemedText>
             <Pressable style={styles.modalCloseButton} onPress={() => setShowFilters(false)}>
               <Ionicons name="close" size={24} color={tintColor} />
             </Pressable>
           </ThemedView>
           
           {/* Filter options would go here */}
-          <ThemedText style={styles.comingSoon}>Advanced filters coming soon!</ThemedText>
+          <ThemedText style={styles.comingSoon}>Bộ lọc nâng cao sắp ra mắt!</ThemedText>
           
           <Pressable 
             style={[styles.modalButton, { backgroundColor: tintColor }]}
             onPress={() => setShowFilters(false)}
           >
-            <ThemedText style={styles.modalButtonText}>Apply Filters</ThemedText>
+            <ThemedText style={styles.modalButtonText}>Áp Dụng Bộ Lọc</ThemedText>
           </Pressable>
         </ThemedView>
       </Modal>
@@ -540,5 +666,29 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: '600',
+  },
+  selectionActions: {
+    flexDirection: 'row',
+    backgroundColor: 'transparent',
+  },
+  headerAction: {
+    padding: 8,
+    marginLeft: 8,
+  },
+  transactionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+  },
+  selectedTransactionRow: {
+    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+  },
+  selectionCheckbox: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  transactionCardWrapper: {
+    flex: 1,
+    backgroundColor: 'transparent',
   },
 });
