@@ -226,40 +226,81 @@ class DatabaseManager {
   }
 
   async getTransactionById(id: number): Promise<Transaction | null> {
-    if (!this.db) throw new Error('Database not initialized');
+    await this.ensureInitialized();
+    
+    try {
+      if (!Number.isInteger(id) || id <= 0) {
+        throw new DatabaseException('INVALID_ID', 'ID giao dịch không hợp lệ');
+      }
 
-    const result = await this.db.getFirstAsync(
-      `SELECT * FROM transactions WHERE id = ?`,
-      [id]
-    );
+      const result = await this.db!.getFirstAsync(
+        `SELECT * FROM transactions WHERE id = ?`,
+        [id]
+      );
 
-    return result as Transaction | null;
+      return result as Transaction | null;
+    } catch (error) {
+      if (error instanceof DatabaseException) {
+        throw error;
+      }
+      throw new DatabaseException('QUERY_ERROR', 'Lỗi khi truy vấn giao dịch theo ID', error as Error);
+    }
   }
 
   async updateTransaction(id: number, updates: Partial<Transaction>): Promise<void> {
-    if (!this.db) throw new Error('Database not initialized');
+    await this.ensureInitialized();
+    
+    try {
+      if (!Number.isInteger(id) || id <= 0) {
+        throw new DatabaseException('INVALID_ID', 'ID giao dịch không hợp lệ');
+      }
 
-    const setClause = Object.keys(updates)
-      .filter(key => key !== 'id' && key !== 'created_at')
-      .map(key => `${key} = ?`)
-      .join(', ');
+      const setClause = Object.keys(updates)
+        .filter(key => key !== 'id' && key !== 'created_at')
+        .map(key => `${key} = ?`)
+        .join(', ');
 
-    if (!setClause) return;
+      if (!setClause) return;
 
-    const values = Object.entries(updates)
-      .filter(([key]) => key !== 'id' && key !== 'created_at')
-      .map(([, value]) => value);
+      const values = Object.entries(updates)
+        .filter(([key]) => key !== 'id' && key !== 'created_at')
+        .map(([, value]) => value);
 
-    await this.db.runAsync(
-      `UPDATE transactions SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [...values, id]
-    );
+      const result = await this.db!.runAsync(
+        `UPDATE transactions SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [...values, id]
+      );
+
+      if (result.changes === 0) {
+        throw new DatabaseException('TRANSACTION_NOT_FOUND', 'Không tìm thấy giao dịch để cập nhật');
+      }
+    } catch (error) {
+      if (error instanceof DatabaseException) {
+        throw error;
+      }
+      throw new DatabaseException('UPDATE_ERROR', 'Lỗi khi cập nhật giao dịch', error as Error);
+    }
   }
 
   async deleteTransaction(id: number): Promise<void> {
-    if (!this.db) throw new Error('Database not initialized');
+    await this.ensureInitialized();
+    
+    try {
+      if (!Number.isInteger(id) || id <= 0) {
+        throw new DatabaseException('INVALID_ID', 'ID giao dịch không hợp lệ');
+      }
 
-    await this.db.runAsync(`DELETE FROM transactions WHERE id = ?`, [id]);
+      const result = await this.db!.runAsync(`DELETE FROM transactions WHERE id = ?`, [id]);
+
+      if (result.changes === 0) {
+        throw new DatabaseException('TRANSACTION_NOT_FOUND', 'Không tìm thấy giao dịch để xóa');
+      }
+    } catch (error) {
+      if (error instanceof DatabaseException) {
+        throw error;
+      }
+      throw new DatabaseException('DELETE_ERROR', 'Lỗi khi xóa giao dịch', error as Error);
+    }
   }
 
   // Analytics functions

@@ -48,6 +48,7 @@ export default function TransactionsScreen() {
   const router = useRouter();
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
+  const textColor = useThemeColor({}, 'text');
 
   // Initialize database and load transactions
   useEffect(() => {
@@ -336,9 +337,9 @@ export default function TransactionsScreen() {
             <ThemedView style={[styles.searchBox, { borderColor: tintColor + '30' }]}>
               <Ionicons name="search" size={20} color={tintColor} />
               <TextInput
-                style={[styles.searchInput, { color: useThemeColor({}, 'text') }]}
+                style={[styles.searchInput, { color: textColor }]}
                 placeholder="Tìm kiếm giao dịch..."
-                placeholderTextColor={useThemeColor({}, 'text') + '60'}
+                placeholderTextColor={textColor + '60'}
                 value={searchTerm}
                 onChangeText={setSearchTerm}
               />

@@ -39,6 +39,7 @@ export default function AddTransactionScreen() {
   const params = useLocalSearchParams();
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
+  const textColor = useThemeColor({}, 'text');
 
   // Load transaction for editing if ID is provided
   useEffect(() => {
@@ -62,10 +63,14 @@ export default function AddTransactionScreen() {
           type: transaction.type,
         });
         setIsEditing(true);
+      } else {
+        Alert.alert('Lỗi', 'Không tìm thấy giao dịch này.');
+        router.back();
       }
     } catch (error) {
       console.error('Error loading transaction:', error);
-      Alert.alert('Error', 'Failed to load transaction for editing.');
+      Alert.alert('Lỗi', 'Không thể tải thông tin giao dịch để chỉnh sửa.');
+      router.back();
     } finally {
       setLoading(false);
     }
@@ -93,16 +98,17 @@ export default function AddTransactionScreen() {
 
       if (isEditing && params.id) {
         await database.updateTransaction(parseInt(params.id as string), transactionData);
-        Alert.alert('Success', 'Transaction updated successfully!');
+        Alert.alert('Thành Công', 'Giao dịch đã được cập nhật!');
       } else {
         await database.addTransaction(transactionData);
-        Alert.alert('Success', 'Transaction added successfully!');
+        Alert.alert('Thành Công', 'Giao dịch đã được thêm!');
       }
 
       router.back();
     } catch (error) {
       console.error('Error saving transaction:', error);
-      Alert.alert('Error', 'Failed to save transaction. Please try again.');
+      const errorMessage = error instanceof Error ? error.message : 'Không thể lưu giao dịch. Vui lòng thử lại.';
+      Alert.alert('Lỗi', errorMessage);
     } finally {
       setLoading(false);
     }
@@ -238,9 +244,9 @@ export default function AddTransactionScreen() {
           <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}>
             <ThemedText style={styles.currencySymbol}>₫</ThemedText>
             <TextInput
-              style={[styles.amountInput, { color: useThemeColor({}, 'text') }]}
+              style={[styles.amountInput, { color: textColor }]}
               placeholder="0"
-              placeholderTextColor={useThemeColor({}, 'text') + '60'}
+              placeholderTextColor={textColor + '60'}
               value={formData.amount}
               onChangeText={(text) => {
                 // Only allow numbers and decimal point
@@ -257,9 +263,9 @@ export default function AddTransactionScreen() {
           <ThemedText style={styles.sectionTitle}>Mô Tả</ThemedText>
           <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}>
             <TextInput
-              style={[styles.textInput, { color: useThemeColor({}, 'text') }]}
+              style={[styles.textInput, { color: textColor }]}
               placeholder="Nhập mô tả giao dịch"
-              placeholderTextColor={useThemeColor({}, 'text') + '60'}
+              placeholderTextColor={textColor + '60'}
               value={formData.description}
               onChangeText={(text) => setFormData(prev => ({ ...prev, description: text }))}
               multiline

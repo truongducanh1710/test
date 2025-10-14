@@ -28,6 +28,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
+  const recentListBgColor = useThemeColor({ light: '#ffffff', dark: '#1f1f1f' }, 'background');
 
   // Load data when screen focuses
   useFocusEffect(
@@ -104,12 +105,12 @@ export default function HomeScreen() {
         end={{ x: 1, y: 1 }}
       >
         <ThemedView style={styles.headerContent}>
-          <ThemedText style={styles.welcomeText}>Current Balance</ThemedText>
-          <ThemedText style={styles.balanceText}>
+          <ThemedText style={styles.welcomeText}>Số Dư Hiện Tại</ThemedText>
+          <ThemedText style={styles.balanceText} numberOfLines={1} adjustsFontSizeToFit>
             {formatCurrency(summary.balance)}
           </ThemedText>
           <ThemedText style={styles.subHeaderText}>
-            This month • {summary.transactionCount} transactions
+            Tháng này • {summary.transactionCount} giao dịch
           </ThemedText>
         </ThemedView>
       </LinearGradient>
@@ -121,7 +122,7 @@ export default function HomeScreen() {
             <ThemedView style={[styles.summaryIconContainer, { backgroundColor: '#22c55e' }]}>
               <Ionicons name="arrow-up" size={24} color="white" />
             </ThemedView>
-            <ThemedText style={styles.summaryLabel}>Income</ThemedText>
+            <ThemedText style={styles.summaryLabel}>Thu Nhập</ThemedText>
             <ThemedText style={[styles.summaryAmount, { color: '#22c55e' }]}>
               {formatCurrency(summary.totalIncome)}
             </ThemedText>
@@ -131,7 +132,7 @@ export default function HomeScreen() {
             <ThemedView style={[styles.summaryIconContainer, { backgroundColor: '#ef4444' }]}>
               <Ionicons name="arrow-down" size={24} color="white" />
             </ThemedView>
-            <ThemedText style={styles.summaryLabel}>Expenses</ThemedText>
+            <ThemedText style={styles.summaryLabel}>Chi Tiêu</ThemedText>
             <ThemedText style={[styles.summaryAmount, { color: '#ef4444' }]}>
               {formatCurrency(summary.totalExpense)}
         </ThemedText>
@@ -141,15 +142,15 @@ export default function HomeScreen() {
 
       {/* Quick Actions */}
       <ThemedView style={styles.actionsContainer}>
-        <ThemedText type="title" style={styles.sectionTitle}>Quick Actions</ThemedText>
+        <ThemedText type="title" style={styles.sectionTitle}>Hành Động Nhanh</ThemedText>
         
         <ThemedView style={styles.quickActionsRow}>
           <Pressable 
-            style={[styles.quickActionButton, { backgroundColor: tintColor }]}
+            style={[styles.quickActionButton, { backgroundColor: tintColor, borderColor: tintColor }]}
             onPress={() => router.push('/camera')}
           >
             <Ionicons name="camera" size={24} color="white" />
-            <ThemedText style={styles.quickActionText}>Scan Statement</ThemedText>
+            <ThemedText style={[styles.quickActionText, { color: 'white' }]}>Quét Sao Kê</ThemedText>
           </Pressable>
 
           <Pressable 
@@ -157,7 +158,7 @@ export default function HomeScreen() {
             onPress={() => router.push('/add-transaction')}
           >
             <Ionicons name="add-circle" size={24} color={tintColor} />
-            <ThemedText style={[styles.quickActionText, { color: tintColor }]}>Add Transaction</ThemedText>
+            <ThemedText style={[styles.quickActionText, { color: tintColor }]}>Thêm Giao Dịch</ThemedText>
           </Pressable>
         </ThemedView>
 
@@ -167,12 +168,12 @@ export default function HomeScreen() {
             onPress={() => router.push('/transactions')}
           >
             <Ionicons name="list" size={24} color={tintColor} />
-            <ThemedText style={[styles.quickActionText, { color: tintColor }]}>View All</ThemedText>
+            <ThemedText style={[styles.quickActionText, { color: tintColor }]}>Xem Tất Cả</ThemedText>
           </Pressable>
 
-          <Pressable style={styles.quickActionButton}>
+          <Pressable style={[styles.quickActionButton, { borderColor: tintColor + '60' }]}>
             <Ionicons name="stats-chart" size={24} color={tintColor} />
-            <ThemedText style={[styles.quickActionText, { color: tintColor }]}>Analytics</ThemedText>
+            <ThemedText style={[styles.quickActionText, { color: tintColor }]}>Phân Tích</ThemedText>
           </Pressable>
         </ThemedView>
       </ThemedView>
@@ -212,13 +213,13 @@ export default function HomeScreen() {
       {recentTransactions.length > 0 && (
         <ThemedView style={styles.recentContainer}>
           <ThemedView style={styles.recentHeader}>
-            <ThemedText type="title" style={styles.sectionTitle}>Recent Transactions</ThemedText>
+            <ThemedText type="title" style={styles.sectionTitle}>Giao Dịch Gần Đây</ThemedText>
             <Pressable onPress={() => router.push('/transactions')}>
-              <ThemedText style={[styles.viewAllText, { color: tintColor }]}>View All</ThemedText>
+              <ThemedText style={[styles.viewAllText, { color: tintColor }]}>Xem Tất Cả</ThemedText>
             </Pressable>
           </ThemedView>
           
-          <ThemedView style={styles.recentList}>
+          <ThemedView style={[styles.recentList, { backgroundColor: recentListBgColor }]}>
             {recentTransactions.slice(0, 5).map((transaction) => (
               <CompactTransactionCard key={transaction.id} transaction={transaction} />
             ))}
@@ -307,7 +308,7 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     flex: 1,
-    backgroundColor: 'white',
+    backgroundColor: 'transparent',
     borderRadius: 15,
     padding: 20,
     marginHorizontal: 5,
@@ -328,8 +329,9 @@ const styles = StyleSheet.create({
   },
   summaryLabel: {
     fontSize: 14,
-    opacity: 0.7,
+    opacity: 0.9,
     marginBottom: 4,
+    color: '#e5e7eb'
   },
   summaryAmount: {
     fontSize: 18,
@@ -418,7 +420,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   recentList: {
-    backgroundColor: 'white',
     borderRadius: 15,
     elevation: 2,
     shadowColor: '#000',

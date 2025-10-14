@@ -61,16 +61,16 @@ export function CompactTransactionCard({ transaction, onPress, onLongPress }: Co
               {transaction.description}
             </ThemedText>
             <ThemedView style={styles.metaRow}>
-              <ThemedText style={styles.category} numberOfLines={1}>
+              <ThemedText style={[styles.category, { color: textColor }]} numberOfLines={1}>
                 {transaction.category}
               </ThemedText>
-              <ThemedText style={styles.separator}>•</ThemedText>
-              <ThemedText style={styles.date}>
+              <ThemedText style={[styles.separator, { color: textColor }]}>•</ThemedText>
+              <ThemedText style={[styles.date, { color: textColor }]}>
                 {formatDate(transaction.date)}
               </ThemedText>
               {transaction.source === 'ai' && (
                 <>
-                  <ThemedText style={styles.separator}>•</ThemedText>
+                  <ThemedText style={[styles.separator, { color: textColor }]}>•</ThemedText>
                   <Ionicons name="sparkles" size={12} color="#6366f1" />
                 </>
               )}
@@ -249,17 +249,19 @@ const styles = StyleSheet.create({
   },
   category: {
     fontSize: 13,
-    opacity: 0.7,
+    opacity: 0.85,
     flex: 1,
+    fontWeight: '500',
   },
   separator: {
     fontSize: 12,
-    opacity: 0.5,
+    opacity: 0.7,
     marginHorizontal: 6,
   },
   date: {
     fontSize: 13,
-    opacity: 0.7,
+    opacity: 0.85,
+    fontWeight: '500',
   },
   rightSection: {
     alignItems: 'flex-end',
@@ -302,8 +304,9 @@ const styles = StyleSheet.create({
   },
   dateText: {
     fontSize: 14,
-    opacity: 0.7,
+    opacity: 0.85,
     marginRight: 10,
+    fontWeight: '500',
   },
   aiTag: {
     flexDirection: 'row',
