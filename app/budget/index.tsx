@@ -6,6 +6,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { database, Budget, Wallet } from '@/lib/database';
+import { EXPENSE_CATEGORIES } from '@/types/transaction';
 
 type Cycle = 'weekly' | 'monthly';
 
@@ -30,10 +31,13 @@ export default function BudgetSetupScreen() {
   const [rollover, setRollover] = useState<boolean>(false);
   const [monthlyIncome, setMonthlyIncome] = useState<string>('');
   const [wallets, setWallets] = useState<Wallet[]>([]);
+  const [categoryWallet, setCategoryWallet] = useState<Record<string, string | null>>({});
 
   const totalPercent = useMemo(() => {
     return wallets.reduce((acc, w) => acc + (Number(w.percent || 0)), 0);
   }, [wallets]);
+
+  const vnNameOf = (name: string) => name === 'Essentials' ? 'Thiết yếu' : name === 'Savings' ? 'Tiết kiệm' : name === 'Education' ? 'Học tập' : name === 'Lifestyle' ? 'Lối sống' : name;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -51,6 +55,15 @@ export default function BudgetSetupScreen() {
         } else {
           setWallets(DEFAULT_WALLETS.map(w => ({ id: undefined, budget_id: existing.id!, name: w.name, percent: w.percent, color: w.color })));
         }
+        // load mapping
+        const map = await database.getWalletCategoriesMap(existing.id!);
+        const reverse: Record<string, string | null> = {};
+        EXPENSE_CATEGORIES.forEach(cat => {
+          let found: string | null = null;
+          map.forEach((arr, wid) => { if (!found && arr.includes(cat)) found = wid; });
+          reverse[cat] = found;
+        });
+        setCategoryWallet(reverse);
       } else {
         const start = new Date();
         const payload: Omit<Budget, 'id' | 'created_at'> = {
@@ -63,6 +76,7 @@ export default function BudgetSetupScreen() {
         setCycle('monthly');
         setRollover(false);
         setWallets(DEFAULT_WALLETS.map(w => ({ id: undefined, budget_id: id, name: w.name, percent: w.percent, color: w.color })));
+        setCategoryWallet({});
       }
     } catch (e: any) {
       Alert.alert('Lỗi', e?.message || 'Không thể tải ngân sách');
@@ -108,6 +122,17 @@ export default function BudgetSetupScreen() {
         return base;
       });
       await database.upsertWallets(upsertWallets);
+      // save mapping
+      const walletIdByName = new Map<string, string>();
+      const currentWallets = await database.listWallets(id);
+      currentWallets.forEach(w => walletIdByName.set(w.name, w.id!));
+      const items = Object.entries(categoryWallet).map(([category, wid]) => ({
+        budget_id: id,
+        category,
+        wallet_id: wid || null,
+        limit_amount: 0,
+      }));
+      await database.upsertCategoryBudgets(items as any);
       Alert.alert('Thành công', 'Đã lưu thiết lập ngân sách');
       router.back();
     } catch (e: any) {
@@ -172,6 +197,22 @@ export default function BudgetSetupScreen() {
           </View>
         ))}
         <ThemedText style={[styles.totalText, { color: Math.round(totalPercent) === 100 ? '#16a34a' : '#ef4444' }]}>Tổng: {totalPercent}%</ThemedText>
+      </ThemedView>
+
+      <ThemedView style={[styles.card, { backgroundColor: cardBg }]}> 
+        <ThemedText style={styles.sectionLabel}>Gán danh mục vào ví</ThemedText>
+        {EXPENSE_CATEGORIES.map((cat) => (
+          <View key={cat} style={styles.mapRow}>
+            <ThemedText style={styles.mapCat}>{cat}</ThemedText>
+            <View style={styles.mapActions}>
+              {wallets.map(w => (
+                <Pressable key={w.id || w.name} style={[styles.mapChip, (categoryWallet[cat] === w.id) ? { borderColor: tintColor } : null]} onPress={() => setCategoryWallet(prev => ({ ...prev, [cat]: w.id || null }))}>
+                  <ThemedText style={[styles.mapChipText, { color: (categoryWallet[cat] === w.id) ? tintColor : textColor }]}>{vnNameOf(w.name)}</ThemedText>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ))}
       </ThemedView>
 
       <Pressable style={[styles.saveBtn, { backgroundColor: tintColor }]} onPress={handleSave} disabled={loading}>
@@ -274,5 +315,30 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginLeft: 8,
     fontSize: 16,
+  },
+  mapRow: {
+    marginTop: 10,
+  },
+  mapCat: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  mapActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8 as any,
+  },
+  mapChip: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  mapChipText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

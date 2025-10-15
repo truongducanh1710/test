@@ -47,6 +47,8 @@ export default function FinanceScreen() {
   const [budget, setBudget] = useState<Budget | null>(null);
   const [walletProgress, setWalletProgress] = useState<{ id: string; name: string; color?: string | null; spend: number; limit: number; usedPct: number }[]>([]);
   const [incomeThisMonth, setIncomeThisMonth] = useState<number>(0);
+  const [walletCategories, setWalletCategories] = useState<Map<string, string[]>>(new Map());
+  const [expandedWallets, setExpandedWallets] = useState<Set<string>>(new Set());
   
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
@@ -90,6 +92,7 @@ export default function FinanceScreen() {
         try {
           // Always refresh background
           await database.init();
+          database.enableRealtime();
           await setupAndroidChannels();
           await ensureNotificationPermissions();
           const now = new Date();
@@ -192,6 +195,7 @@ export default function FinanceScreen() {
     setBudget(b);
     setWalletProgress(computed);
     setIncomeThisMonth(income);
+    setWalletCategories(await database.getWalletCategoriesMap(b.id!));
     financeBudgetCache = { budget: b, wallets: computed };
     setBudgetLoading(false);
 
@@ -279,30 +283,71 @@ export default function FinanceScreen() {
           </Pressable>
         ) : walletProgress.length > 0 ? (
           walletProgress.map(w => {
+            const vnName = w.name === 'Essentials' ? 'Thiết yếu' : w.name === 'Savings' ? 'Tiết kiệm' : w.name === 'Education' ? 'Học tập' : w.name === 'Lifestyle' ? 'Lối sống' : w.name;
+            const cats = walletCategories.get(w.id) || [];
             const barColor = w.usedPct < 80 ? tintColor : w.usedPct <= 100 ? '#f59e0b' : '#ef4444';
+            const statusLabel = w.usedPct > 100 ? 'Vượt' : w.usedPct >= 80 ? 'Gần ngưỡng' : 'Ổn định';
+            const statusColor = w.usedPct > 100 ? '#ef4444' : w.usedPct >= 80 ? '#f59e0b' : '#22c55e';
+            const isExpanded = expandedWallets.has(w.id);
+            
             return (
-              <Pressable key={w.id} onPress={() => (router.push({ pathname: `/budget/${w.id}` } as any))}>
-                <ThemedView style={styles.categoryItem}>
-                  <ThemedView style={styles.categoryInfo}>
-                    <ThemedText style={styles.categoryName}>{w.name}</ThemedText>
-                    <ThemedText style={styles.categoryAmount}>
-                      {formatCurrency(w.spend)} / {formatCurrency(w.limit)}
-                    </ThemedText>
+              <ThemedView key={w.id} style={styles.walletCard}>
+                {/* Wallet Header - Compact */}
+                <ThemedView style={styles.walletTitleRow}>
+                  <ThemedText style={styles.walletName}>{vnName}</ThemedText>
+                  <ThemedView style={[styles.statusChip, { backgroundColor: statusColor + '20', borderColor: statusColor }]}>
+                    <ThemedText style={[styles.statusChipText, { color: statusColor }]}>{statusLabel}</ThemedText>
                   </ThemedView>
-                  <ThemedView style={[styles.categoryBar, { backgroundColor: dividerColor }]}> 
-                    <ThemedView 
-                      style={[styles.categoryBarFill, { width: `${Math.min(100, w.usedPct)}%`, backgroundColor: barColor }]} 
-                    />
+                </ThemedView>
+
+                {/* Amount & Progress in one line */}
+                <ThemedView style={styles.walletProgressRow}>
+                  <ThemedText style={styles.walletAmountCompact}>
+                    {formatCurrency(w.spend)} / {formatCurrency(w.limit)}
+                  </ThemedText>
+                  <ThemedText style={[styles.walletPercentage, { color: barColor }]}>
+                    {w.usedPct.toFixed(0)}%
+                  </ThemedText>
+                </ThemedView>
+
+                {/* Progress Bar */}
+                <ThemedView style={[styles.walletProgressBar, { backgroundColor: dividerColor }]}>
+                  <ThemedView 
+                    style={[styles.walletProgressFill, { width: `${Math.min(100, w.usedPct)}%`, backgroundColor: barColor }]} 
+                  />
+                </ThemedView>
+
+                {/* Categories - Compact */}
+                {cats.length > 0 && (
+                  <ThemedView style={styles.categoryChipsContainer}>
+                    {(isExpanded ? cats : cats.slice(0, 4)).map((cat, idx) => (
+                      <ThemedView key={idx} style={[styles.categoryChip, { backgroundColor: tintColor + '15', borderColor: tintColor + '40' }]}>
+                        <ThemedText style={[styles.categoryChipText, { color: tintColor }]}>{cat}</ThemedText>
+                      </ThemedView>
+                    ))}
+                    {cats.length > 4 && (
+                      <Pressable onPress={() => {
+                        const newSet = new Set(expandedWallets);
+                        if (isExpanded) newSet.delete(w.id);
+                        else newSet.add(w.id);
+                        setExpandedWallets(newSet);
+                      }}>
+                        <ThemedView style={[styles.categoryChip, { backgroundColor: tintColor + '25', borderColor: tintColor }]}>
+                          <ThemedText style={[styles.categoryChipText, { color: tintColor, fontWeight: '600' }]}>
+                            {isExpanded ? 'Thu gọn' : `+${cats.length - 4}`}
+                          </ThemedText>
+                        </ThemedView>
+                      </Pressable>
+                    )}
                   </ThemedView>
-                  <ThemedText style={styles.categoryPercentage}>{w.usedPct.toFixed(0)}%</ThemedText>
-          </ThemedView>
-              </Pressable>
+                )}
+              </ThemedView>
             );
           })
         ) : (
           <ThemedText style={{ opacity: 0.7 }}>{budgetLoading ? 'Đang tải...' : 'Không có dữ liệu'}</ThemedText>
         )}
-          </ThemedView>
+      </ThemedView>
 
       {/* Top Categories */}
       <ThemedView style={[styles.categoriesContainer, { backgroundColor: cardBg }]}> 
@@ -793,5 +838,77 @@ const styles = StyleSheet.create({
   bottomSpacer: {
     height: 50,
     backgroundColor: 'transparent',
+  },
+  walletCard: {
+    backgroundColor: 'transparent',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.05)',
+  },
+  walletTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+    backgroundColor: 'transparent',
+  },
+  walletName: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  statusChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  statusChipText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  walletProgressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+    backgroundColor: 'transparent',
+  },
+  walletAmountCompact: {
+    fontSize: 12,
+    opacity: 0.7,
+    fontWeight: '500',
+  },
+  walletPercentage: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  walletProgressBar: {
+    height: 8,
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  walletProgressFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  categoryChipsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 4,
+    backgroundColor: 'transparent',
+  },
+  categoryChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginRight: 5,
+    marginBottom: 5,
+  },
+  categoryChipText: {
+    fontSize: 10,
+    fontWeight: '500',
   },
 });

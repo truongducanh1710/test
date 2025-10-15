@@ -1,5 +1,5 @@
 import * as SQLite from 'expo-sqlite';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient, type RealtimeChannel } from '@supabase/supabase-js';
 // Simple event emitter to notify UI of database changes
 type DbEvent = 'transactions_changed' | 'category_budgets_changed';
 class DbEventEmitter {
@@ -111,6 +111,8 @@ class DatabaseManager {
   private db: SQLite.SQLiteDatabase | null = null;
   private isInitializing: boolean = false;
   private sb: SupabaseClient | null = null;
+  private realtimeChannel: RealtimeChannel | null = null;
+  private realtimeBound: boolean = false;
   private toDateString(d: Date): string {
     return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
       .toISOString()
@@ -153,6 +155,25 @@ class DatabaseManager {
       throw new DatabaseException('INIT_FAILED', 'Không thể khởi tạo cơ sở dữ liệu', error as Error);
     } finally {
       this.isInitializing = false;
+    }
+  }
+
+  // Enable Supabase realtime for cross-source updates
+  enableRealtime() {
+    if (!this.sb || this.realtimeBound) return;
+    try {
+      this.realtimeChannel = this.sb
+        .channel('app-changes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => {
+          databaseEvents.emit('transactions_changed');
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'category_budgets' }, () => {
+          databaseEvents.emit('category_budgets_changed');
+        })
+        .subscribe();
+      this.realtimeBound = true;
+    } catch (e) {
+      // noop – realtime optional
     }
   }
 
@@ -296,6 +317,18 @@ class DatabaseManager {
     this.assertSupabase();
     const { error } = await this.sb!.from('category_budgets').upsert(items as any);
     if (error) throw new DatabaseException('UPSERT_ERROR', error.message as any);
+    databaseEvents.emit('category_budgets_changed');
+  }
+
+  // Build wallet_id -> categories[] map, includes 'unassigned' key when wallet_id is null
+  async getWalletCategoriesMap(budgetId: string): Promise<Map<string, string[]>> {
+    const rows = await this.listCategoryBudgets(budgetId);
+    const map = new Map<string, string[]>();
+    for (const r of rows) {
+      const key = r.wallet_id || 'unassigned';
+      map.set(key, [...(map.get(key) || []), r.category]);
+    }
+    return map;
   }
 
   // Seed default category -> wallet mapping if none exists for this budget
