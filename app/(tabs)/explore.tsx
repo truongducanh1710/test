@@ -49,6 +49,9 @@ export default function FinanceScreen() {
   const [incomeThisMonth, setIncomeThisMonth] = useState<number>(0);
   const [walletCategories, setWalletCategories] = useState<Map<string, string[]>>(new Map());
   const [expandedWallets, setExpandedWallets] = useState<Set<string>>(new Set());
+  const [loansSummary, setLoansSummary] = useState<{ totalBorrow: number; totalLend: number; dueSoon: number; openCount: number }>({ totalBorrow: 0, totalLend: 0, dueSoon: 0, openCount: 0 });
+  const [recentLoans, setRecentLoans] = useState<{ id: string; kind: 'borrow' | 'lend'; person: string; due_date: string | null; amount: number }[]>([]);
+  const [loansLoading, setLoansLoading] = useState(false);
   
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
@@ -128,6 +131,17 @@ export default function FinanceScreen() {
             try { await database.seedDefaultCategoryWalletsIfEmpty(financeBudgetCache.budget.id!); } catch {}
           }
           await loadBudgetAndWallets(range);
+
+          // Loans summary + recent
+          setLoansLoading(true);
+          const [summary, recent] = await Promise.all([
+            database.getLoansSummary(),
+            database.getRecentLoans(3),
+          ]);
+          setLoansSummary(summary);
+          setRecentLoans(recent);
+          setLoansLoading(false);
+
           // schedule digest once (idempotent-ish; harmless if repeats)
           scheduleDailyDigest(9).catch(() => {});
         } finally {
@@ -139,12 +153,16 @@ export default function FinanceScreen() {
       const onChange = () => {
         fetchTopCategories(range, true);
         loadBudgetAndWallets(range);
+        database.getLoansSummary().then(setLoansSummary).catch(() => {});
+        database.getRecentLoans(3).then(setRecentLoans).catch(() => {});
       };
       databaseEvents.on('transactions_changed', onChange);
       databaseEvents.on('category_budgets_changed', onChange);
+      databaseEvents.on('loans_changed', onChange);
       return () => {
         databaseEvents.off('transactions_changed', onChange);
         databaseEvents.off('category_budgets_changed', onChange);
+        databaseEvents.off('loans_changed', onChange);
       };
     }, [range])
   );
@@ -386,8 +404,48 @@ export default function FinanceScreen() {
           )}
       </ThemedView>
 
+      {/* Loans Card (below Top Categories) */}
+      <ThemedView style={[styles.categoriesContainer, { backgroundColor: cardBg }]}> 
+        <ThemedText type="title" style={styles.sectionTitle}>Vay & Cho vay</ThemedText>
+        {loansLoading ? (
+          <ActivityIndicator size="small" color={tintColor} />
+        ) : (
+          <>
+            <ThemedView style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <ThemedView style={{ flex: 1, marginRight: 8 }}>
+                <ThemedText style={{ opacity: 0.7 }}>Đang vay</ThemedText>
+                <ThemedText style={{ fontWeight: '700', marginBottom: 8 }}>{formatCurrency(loansSummary.totalBorrow)}</ThemedText>
+              </ThemedView>
+              <ThemedView style={{ flex: 1, marginLeft: 8 }}>
+                <ThemedText style={{ opacity: 0.7 }}>Đang cho vay</ThemedText>
+                <ThemedText style={{ fontWeight: '700', marginBottom: 8 }}>{formatCurrency(loansSummary.totalLend)}</ThemedText>
+              </ThemedView>
+            </ThemedView>
+            <ThemedText style={{ opacity: 0.7 }}>Sắp đến hạn (3 ngày): {loansSummary.dueSoon}</ThemedText>
+
+            {/* Recent loans */}
+            <ThemedView style={{ marginTop: 10 }}>
+              {recentLoans.map((l) => (
+                <ThemedView key={l.id} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <ThemedText style={{ fontWeight: '600' }}>{l.kind === 'borrow' ? 'Vay' : 'Cho vay'} • {l.person}</ThemedText>
+                  <ThemedText style={{ opacity: 0.7 }}>{formatCurrency(l.amount)}</ThemedText>
+                </ThemedView>
+              ))}
+              {recentLoans.length === 0 && (
+                <ThemedText style={{ opacity: 0.7 }}>Chưa có khoản nào</ThemedText>
+              )}
+            </ThemedView>
+
+            <Pressable style={[styles.rangeSelector, { alignSelf: 'flex-end', marginTop: 10, borderColor: tintColor + '60' }]} onPress={() => router.push('/loans' as any)}>
+              <ThemedText style={[styles.rangeSelectorText, { color: tintColor }]}>Xem tất cả</ThemedText>
+              <Ionicons name="chevron-forward" size={18} color={tintColor} />
+            </Pressable>
+          </>
+        )}
+      </ThemedView>
+
       {/* Monthly Trends */}
-      <ThemedView style={[styles.trendsContainer, { backgroundColor: cardBg }]}>
+      <ThemedView style={[styles.trendsContainer, { backgroundColor: cardBg }]}> 
         <ThemedText type="title" style={styles.sectionTitle}>Xu Hướng 6 Tháng Gần Đây</ThemedText>
         <ThemedView style={styles.trendsChart}>
           {monthlyData.map((month, index) => {
@@ -429,7 +487,7 @@ export default function FinanceScreen() {
       </ThemedView>
 
       {/* Financial Tools */}
-      <ThemedView style={[styles.toolsContainer, { backgroundColor: cardBg }]}>
+      <ThemedView style={[styles.toolsContainer, { backgroundColor: cardBg }]}> 
         <ThemedText type="title" style={styles.sectionTitle}>Công Cụ Tài Chính</ThemedText>
         
         <ThemedView style={styles.toolsGrid}>
@@ -452,7 +510,7 @@ export default function FinanceScreen() {
         </Pressable>
 
         <Pressable 
-            style={[styles.toolCard, { backgroundColor: '#06b6d4' }]}
+            style={[styles.toolCard, { backgroundColor: '#06b6d4' }]} 
             onPress={() => setShowExportModal(true)}
           >
             <Ionicons name="download-outline" size={32} color="white" />
@@ -461,7 +519,7 @@ export default function FinanceScreen() {
         </Pressable>
 
         <Pressable 
-            style={[styles.toolCard, { backgroundColor: '#10b981' }]}
+            style={[styles.toolCard, { backgroundColor: '#10b981' }]} 
             onPress={() => router.push('/camera')}
           >
             <Ionicons name="camera-outline" size={32} color="white" />
@@ -479,7 +537,7 @@ export default function FinanceScreen() {
         onRequestClose={() => setShowExportModal(false)}
       >
         <ThemedView style={styles.modalOverlay}>
-          <ThemedView style={[styles.modalContent, { backgroundColor }]}>
+          <ThemedView style={[styles.modalContent, { backgroundColor }]}> 
             <ThemedView style={styles.modalHeader}>
               <ThemedText style={styles.modalTitle}>Xuất Dữ Liệu</ThemedText>
               <Pressable onPress={() => setShowExportModal(false)}>

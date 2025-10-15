@@ -34,11 +34,15 @@ export default function AddTransactionScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [loanPerson, setLoanPerson] = useState('');
+  const [loanDueDate, setLoanDueDate] = useState<string | null>(null);
+  const [showDuePicker, setShowDuePicker] = useState(false);
   
   const router = useRouter();
   const params = useLocalSearchParams();
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
+  const primaryColor = useThemeColor({ light: '#2563eb', dark: '#6366f1' }, 'tint');
   const textColor = useThemeColor({}, 'text');
 
   // Load transaction for editing if ID is provided
@@ -76,10 +80,19 @@ export default function AddTransactionScreen() {
     }
   };
 
+  const isLoanCategory = () => {
+    return (formData.type === 'income' && formData.category === 'Vay') || (formData.type === 'expense' && formData.category === 'Cho vay');
+  };
+
   const handleSave = async () => {
     const validationError = validateTransaction(formData);
     if (validationError) {
       Alert.alert('Lỗi Xác Thực', validationError);
+      return;
+    }
+
+    if (isLoanCategory() && !loanPerson.trim()) {
+      Alert.alert('Thiếu thông tin', 'Vui lòng nhập Người liên quan cho khoản vay/cho vay');
       return;
     }
 
@@ -96,12 +109,24 @@ export default function AddTransactionScreen() {
         source: 'manual' as const,
       };
 
+      let newId: string | undefined;
       if (isEditing && params.id) {
         await database.updateTransaction(params.id as string, transactionData);
+        newId = params.id as string;
         Alert.alert('Thành Công', 'Giao dịch đã được cập nhật!');
       } else {
-        await database.addTransaction(transactionData);
+        newId = await database.addTransaction(transactionData);
         Alert.alert('Thành Công', 'Giao dịch đã được thêm!');
+      }
+
+      // Create loan record if applicable (only when creating new or editing category accordingly)
+      if (newId && isLoanCategory()) {
+        await database.addLoanForTransaction({
+          transaction_id: newId,
+          kind: formData.category === 'Vay' ? 'borrow' : 'lend',
+          person: loanPerson.trim(),
+          due_date: loanDueDate || null,
+        });
       }
 
       router.back();
@@ -128,6 +153,13 @@ export default function AddTransactionScreen() {
     }
   };
 
+  const handleDueDateChange = (event: any, selectedDate?: Date) => {
+    setShowDuePicker(false);
+    if (selectedDate) {
+      setLoanDueDate(selectedDate.toISOString().split('T')[0]);
+    }
+  };
+
   const toggleTransactionType = () => {
     const newType: TransactionType = formData.type === 'expense' ? 'income' : 'expense';
     setFormData(prev => ({
@@ -135,6 +167,8 @@ export default function AddTransactionScreen() {
       type: newType,
       category: 'Khác' // Reset category when type changes
     }));
+    setLoanPerson('');
+    setLoanDueDate(null);
   };
 
   const getCategoriesForType = () => {
@@ -289,6 +323,31 @@ export default function AddTransactionScreen() {
           </Pressable>
         </ThemedView>
 
+        {/* Loan-specific fields */}
+        {isLoanCategory() && (
+          <ThemedView style={styles.section}>
+            <ThemedText style={styles.sectionTitle}>Thông tin vay/cho vay</ThemedText>
+            <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}>
+              <Ionicons name="person-outline" size={20} color={tintColor} />
+              <TextInput
+                style={[styles.pickerText, { color: textColor }]}
+                placeholder={formData.category === 'Vay' ? 'Vay của ai?' : 'Cho ai vay?'}
+                placeholderTextColor={textColor + '60'}
+                value={loanPerson}
+                onChangeText={setLoanPerson}
+              />
+            </ThemedView>
+            <Pressable 
+              style={[styles.inputContainer, styles.pickerButton, { borderColor: tintColor + '30', marginTop: 12 }]}
+              onPress={() => setShowDuePicker(true)}
+            >
+              <Ionicons name="time-outline" size={20} color={tintColor} />
+              <ThemedText style={styles.pickerText}>{loanDueDate ? formatDate(loanDueDate) : 'Ngày đến hạn (tùy chọn)'}</ThemedText>
+              <Ionicons name="chevron-down" size={20} color={tintColor} />
+            </Pressable>
+          </ThemedView>
+        )}
+
         {/* Date */}
         <ThemedView style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Ngày</ThemedText>
@@ -305,9 +364,9 @@ export default function AddTransactionScreen() {
         {/* Category Picker Modal */}
         {showCategoryPicker && (
           <ThemedView style={styles.modal}>
-            <ThemedView style={[styles.modalContent, { backgroundColor }]}>
+            <ThemedView style={[styles.modalContent, { backgroundColor }]}> 
               <ThemedView style={styles.modalHeader}>
-                <ThemedText style={styles.modalTitle}>Select Category</ThemedText>
+                <ThemedText style={styles.modalTitle}>Chọn danh mục</ThemedText>
                 <Pressable onPress={() => setShowCategoryPicker(false)}>
                   <Ionicons name="close" size={24} color={tintColor} />
                 </Pressable>
@@ -323,6 +382,11 @@ export default function AddTransactionScreen() {
                     onPress={() => {
                       setFormData(prev => ({ ...prev, category }));
                       setShowCategoryPicker(false);
+                      // reset loan fields when switching away
+                      if (!((prev) => (formData.type === 'income' && category === 'Vay') || (formData.type === 'expense' && category === 'Cho vay'))) {
+                        setLoanPerson('');
+                        setLoanDueDate(null);
+                      }
                     }}
                   >
                     <ThemedText style={styles.categoryIcon}>
@@ -350,6 +414,16 @@ export default function AddTransactionScreen() {
           />
         )}
 
+        {/* Due Date Picker */}
+        {showDuePicker && (
+          <DateTimePicker
+            value={loanDueDate ? new Date(loanDueDate) : new Date()}
+            mode="date"
+            display="default"
+            onChange={handleDueDateChange}
+          />
+        )}
+
         <ThemedView style={styles.bottomSpacer} />
       </ScrollView>
 
@@ -359,12 +433,12 @@ export default function AddTransactionScreen() {
           style={[styles.cancelButton, { borderColor: tintColor }]}
           onPress={handleCancel}
         >
-          <ThemedText style={[styles.cancelButtonText, { color: tintColor }]}>
+          <ThemedText style={[styles.cancelButtonText, { color: tintColor }]}> 
             Hủy
           </ThemedText>
         </Pressable>
         <Pressable 
-          style={[styles.saveButton, { backgroundColor: tintColor }]}
+          style={[styles.saveButton, { backgroundColor: primaryColor }]}
           onPress={handleSave}
           disabled={loading}
         >

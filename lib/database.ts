@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 import { createClient, SupabaseClient, type RealtimeChannel } from '@supabase/supabase-js';
 // Simple event emitter to notify UI of database changes
-type DbEvent = 'transactions_changed' | 'category_budgets_changed';
+type DbEvent = 'transactions_changed' | 'category_budgets_changed' | 'loans_changed';
 class DbEventEmitter {
   private listeners = new Map<DbEvent, Set<(...args: any[]) => void>>();
   on(event: DbEvent, cb: (...args: any[]) => void) {
@@ -27,6 +27,18 @@ export interface Transaction {
   source: 'manual' | 'ai'; // Để biết giao dịch được thêm thủ công hay AI
   created_at?: string;
   updated_at?: string;
+}
+
+// Loan models
+export interface Loan {
+  id?: string;
+  transaction_id: string; // id of the creating transaction
+  kind: 'borrow' | 'lend'; // borrow = Vay, lend = Cho vay
+  person: string;
+  due_date?: string | null; // yyyy-mm-dd
+  status?: 'open' | 'closed';
+  created_at?: string;
+  closed_at?: string | null;
 }
 
 // Budgeting models
@@ -170,6 +182,9 @@ class DatabaseManager {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'category_budgets' }, () => {
           databaseEvents.emit('category_budgets_changed');
         })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'loans' }, () => {
+          databaseEvents.emit('loans_changed');
+        })
         .subscribe();
       this.realtimeBound = true;
     } catch (e) {
@@ -226,6 +241,21 @@ class DatabaseManager {
       for (const indexQuery of createIndexes) {
         await this.db.execAsync(indexQuery);
       }
+
+      // Loans table (for local SQLite fallback)
+      const createLoansTable = `
+        CREATE TABLE IF NOT EXISTS loans (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          transaction_id TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('borrow','lend')),
+          person TEXT NOT NULL,
+          due_date TEXT NULL,
+          status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          closed_at TEXT NULL
+        )
+      `;
+      await this.db.execAsync(createLoansTable);
 
       console.log('Database tables and indexes created successfully');
     } catch (error) {
@@ -815,6 +845,117 @@ class DatabaseManager {
     for (const m of months) {
       await this.seedFakeMonthIfEmpty(m, year);
     }
+  }
+
+  // Loans APIs
+  async addLoanForTransaction(input: Omit<Loan, 'id' | 'status' | 'created_at' | 'closed_at'>): Promise<string> {
+    await this.ensureInitialized();
+    const { transaction_id, kind, person, due_date } = input;
+    if (!transaction_id || !kind || !person.trim()) {
+      throw new DatabaseException('VALIDATION_ERROR', 'Thiếu thông tin khoản vay');
+    }
+
+    if (this.sb) {
+      const { data, error } = await this.sb
+        .from('loans')
+        .insert({ transaction_id, kind, person: person.trim(), due_date: due_date || null, status: 'open' })
+        .select('id')
+        .single();
+      if (error) {
+        // Schema cache not warmed yet or table missing -> degrade gracefully
+        if ((error as any)?.message?.toLowerCase?.().includes('could not find the table') || (error as any)?.code === '42P01') {
+          return '';
+        }
+        throw new DatabaseException('INSERT_FAILED', error.message as any);
+      }
+      databaseEvents.emit('loans_changed');
+      return data!.id as string;
+    }
+
+    const result = await this.db!.runAsync(
+      `INSERT INTO loans (transaction_id, kind, person, due_date, status) VALUES (?, ?, ?, ?, 'open')`,
+      [transaction_id, kind, person.trim(), due_date || null]
+    );
+    if (!result.lastInsertRowId) throw new DatabaseException('INSERT_FAILED', 'Không thể thêm khoản vay');
+    databaseEvents.emit('loans_changed');
+    return String(result.lastInsertRowId);
+  }
+
+  async listLoans(status: 'open' | 'closed' | 'all' = 'open'): Promise<Loan[]> {
+    await this.ensureInitialized();
+    if (this.sb) {
+      try {
+        let query = this.sb.from('loans').select('*').order('created_at', { ascending: false });
+        if (status !== 'all') query = query.eq('status', status);
+        const { data } = await query;
+        return (data || []) as Loan[];
+      } catch (e: any) {
+        // If table not in schema cache yet
+        return [] as Loan[];
+      }
+    }
+    let sql = `SELECT * FROM loans`;
+    const args: any[] = [];
+    if (status !== 'all') { sql += ` WHERE status = ?`; args.push(status); }
+    sql += ` ORDER BY datetime(created_at) DESC`;
+    const rows = await this.db!.getAllAsync(sql, args);
+    return rows as unknown as Loan[];
+  }
+
+  async getLoansSummary(): Promise<{ totalBorrow: number; totalLend: number; dueSoon: number; openCount: number; }>{
+    await this.ensureInitialized();
+    const loans = await this.listLoans('open');
+    let totalBorrow = 0, totalLend = 0, dueSoon = 0;
+    const today = new Date();
+    const threeDays = 3 * 24 * 60 * 60 * 1000;
+    for (const loan of loans) {
+      const tx = await this.getTransactionById(loan.transaction_id);
+      if (tx) {
+        if (loan.kind === 'borrow') totalBorrow += tx.amount; else totalLend += tx.amount;
+      }
+      if (loan.due_date) {
+        const d = new Date(loan.due_date);
+        if (!isNaN(d.getTime()) && d.getTime() - today.getTime() <= threeDays && d.getTime() >= today.getTime()) dueSoon++;
+      }
+    }
+    return { totalBorrow, totalLend, dueSoon, openCount: loans.length };
+  }
+
+  async closeLoanAndCreateSettlement(loanId: string, date?: string): Promise<string> {
+    await this.ensureInitialized();
+    const openLoans = await this.listLoans('open');
+    const loan = openLoans.find(l => String(l.id) === String(loanId));
+    if (!loan) throw new DatabaseException('NOT_FOUND', 'Không tìm thấy khoản vay');
+    const src = await this.getTransactionById(loan.transaction_id);
+    if (!src) throw new DatabaseException('NOT_FOUND', 'Không tìm thấy giao dịch nguồn');
+    const settlementDate = date || new Date().toISOString().split('T')[0];
+    const settlementCategory = loan.kind === 'borrow' ? 'Trả nợ' : 'Thu nợ';
+    const settlementType = loan.kind === 'borrow' ? 'expense' : 'income';
+    const txId = await this.addTransaction({
+      amount: src.amount,
+      description: `${settlementCategory}: ${loan.person}`,
+      category: settlementCategory,
+      date: settlementDate,
+      type: settlementType as any,
+      source: 'manual',
+    });
+
+    if (this.sb) {
+      try {
+        await this.sb.from('loans').update({ status: 'closed', closed_at: new Date().toISOString() }).eq('id', loanId);
+        databaseEvents.emit('loans_changed');
+      } catch {}
+    } else {
+      await this.db!.runAsync(`UPDATE loans SET status='closed', closed_at=CURRENT_TIMESTAMP WHERE id = ?`, [loanId]);
+      databaseEvents.emit('loans_changed');
+    }
+    return txId;
+  }
+
+  async getRecentLoans(limit: number = 10): Promise<Loan[]> {
+    await this.ensureInitialized();
+    const loans = await this.listLoans('open');
+    return loans.slice(0, limit);
   }
 }
 

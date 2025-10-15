@@ -38,8 +38,8 @@ export async function scheduleDailyDigest(hour = 9) {
   await Notifications.cancelScheduledNotificationAsync('budget-digest' as any).catch(() => {});
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: 'Tổng hợp ngân sách',
-      body: 'Xem tiến độ chi tiêu hôm nay',
+      title: 'Tổng hợp tài chính',
+      body: 'Kiểm tra ngân sách và các khoản vay/cho vay sắp đến hạn',
     },
     trigger: {
       hour,

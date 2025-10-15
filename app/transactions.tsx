@@ -51,6 +51,7 @@ export default function TransactionsScreen() {
   const router = useRouter();
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
+  const primaryColor = useThemeColor({ light: '#2563eb', dark: '#6366f1' }, 'tint');
   const textColor = useThemeColor({}, 'text');
 
   // Initialize database and load transactions
@@ -365,7 +366,7 @@ export default function TransactionsScreen() {
               </Pressable>
             </ThemedView>
           ) : (
-            <Pressable style={styles.headerButton} onPress={() => router.push('/camera')}>
+            <Pressable style={[styles.headerButton, { backgroundColor: primaryColor }]} onPress={() => router.push('/camera')}>
               <Ionicons name="camera" size={24} color="white" />
             </Pressable>
           )}
@@ -503,7 +504,7 @@ export default function TransactionsScreen() {
 
       {/* Floating Add Button */}
       <Pressable 
-        style={[styles.fab, { backgroundColor: tintColor }]}
+        style={[styles.fab, { backgroundColor: primaryColor }]}
         onPress={() => router.push('/add-transaction')}
       >
         <Ionicons name="add" size={24} color="white" />

@@ -103,6 +103,7 @@ export const EXPENSE_CATEGORIES = [
   'Bạn bè hiếu hỉ',
   'Tín dụng',
   'Cho vay',
+  'Trả nợ',
   'Khác'
 ] as const;
 
@@ -114,6 +115,7 @@ export const INCOME_CATEGORIES = [
   'Đầu tư',
   'Quà tặng',
   'Vay',
+  'Thu nợ',
   'Khác'
 ] as const;
 
