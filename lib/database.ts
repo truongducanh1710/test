@@ -1,7 +1,8 @@
 import * as SQLite from 'expo-sqlite';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 export interface Transaction {
-  id?: number;
+  id?: string; // uuid on Supabase; numeric only for legacy SQLite
   amount: number;
   description: string;
   category: string;
@@ -67,6 +68,7 @@ const validateTransaction = (transaction: Omit<Transaction, 'id' | 'created_at' 
 class DatabaseManager {
   private db: SQLite.SQLiteDatabase | null = null;
   private isInitializing: boolean = false;
+  private sb: SupabaseClient | null = null;
 
   async init(): Promise<void> {
     if (this.db) {
@@ -83,6 +85,12 @@ class DatabaseManager {
 
     try {
       this.isInitializing = true;
+      // Initialize Supabase client if env is provided
+      const sbUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+      const sbKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+      if (sbUrl && sbKey) {
+        this.sb = createClient(sbUrl, sbKey);
+      }
       this.db = await SQLite.openDatabaseAsync('finance_tracker.db');
       
       // Enable foreign key constraints and WAL mode for better performance
@@ -158,7 +166,7 @@ class DatabaseManager {
   }
 
   // CRUD Operations
-  async addTransaction(transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>): Promise<number> {
+  async addTransaction(transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>): Promise<string> {
     await this.ensureInitialized();
     
     // Validate input
@@ -169,7 +177,17 @@ class DatabaseManager {
 
     try {
       const { amount, description, category, date, type, source } = transaction;
-      
+      // Supabase-first
+      if (this.sb) {
+        const { data, error } = await this.sb
+          .from('transactions')
+          .insert({ amount, description: description.trim(), category: category.trim(), date, type, source })
+          .select('id')
+          .single();
+        if (error) throw new DatabaseException('INSERT_FAILED', error.message as any);
+        return data!.id as string;
+      }
+
       const result = await this.db!.runAsync(
         `INSERT INTO transactions (amount, description, category, date, type, source) 
          VALUES (?, ?, ?, ?, ?, ?)`,
@@ -180,7 +198,7 @@ class DatabaseManager {
         throw new DatabaseException('INSERT_FAILED', 'Không thể thêm giao dịch');
       }
 
-      return result.lastInsertRowId;
+      return String(result.lastInsertRowId);
     } catch (error) {
       if (error instanceof DatabaseException) {
         throw error;
@@ -193,6 +211,23 @@ class DatabaseManager {
     await this.ensureInitialized();
     
     try {
+      // Supabase
+      if (this.sb) {
+        let query = this.sb
+          .from('transactions')
+          .select('*')
+          .order('date', { ascending: false })
+          .order('created_at', { ascending: false });
+        if (limit !== undefined) query = query.limit(limit);
+        // Offset support in Supabase: range
+        if (limit !== undefined && offset !== undefined) {
+          query = query.range(offset, offset + limit - 1);
+        }
+        const { data, error } = await query;
+        if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+        return (data || []) as Transaction[];
+      }
+
       // Validate input parameters
       if (limit !== undefined && (limit < 0 || !Number.isInteger(limit))) {
         throw new DatabaseException('INVALID_LIMIT', 'Giới hạn phải là số nguyên dương');
@@ -216,7 +251,8 @@ class DatabaseManager {
       }
 
       const result = await this.db!.getAllAsync(query, params);
-      return result as Transaction[];
+      // Map numeric id to string for consistency
+      return (result as any[]).map(r => ({ ...r, id: r.id != null ? String(r.id) : undefined })) as Transaction[];
     } catch (error) {
       if (error instanceof DatabaseException) {
         throw error;
@@ -225,20 +261,31 @@ class DatabaseManager {
     }
   }
 
-  async getTransactionById(id: number): Promise<Transaction | null> {
+  async getTransactionById(id: string): Promise<Transaction | null> {
     await this.ensureInitialized();
     
     try {
-      if (!Number.isInteger(id) || id <= 0) {
+      // Supabase path (uuid)
+      if (this.sb) {
+        const { data, error } = await this.sb
+          .from('transactions')
+          .select('*')
+          .eq('id', id)
+          .single();
+        if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+        return data as Transaction;
+      }
+      // SQLite fallback expects numeric id
+      const numericId = Number(id);
+      if (!Number.isInteger(numericId) || numericId <= 0) {
         throw new DatabaseException('INVALID_ID', 'ID giao dịch không hợp lệ');
       }
-
       const result = await this.db!.getFirstAsync(
         `SELECT * FROM transactions WHERE id = ?`,
-        [id]
+        [numericId]
       );
-
-      return result as Transaction | null;
+      if (!result) return null;
+      return { ...(result as any), id: String((result as any).id) } as Transaction;
     } catch (error) {
       if (error instanceof DatabaseException) {
         throw error;
@@ -247,12 +294,18 @@ class DatabaseManager {
     }
   }
 
-  async updateTransaction(id: number, updates: Partial<Transaction>): Promise<void> {
+  async updateTransaction(id: string, updates: Partial<Transaction>): Promise<void> {
     await this.ensureInitialized();
     
     try {
-      if (!Number.isInteger(id) || id <= 0) {
-        throw new DatabaseException('INVALID_ID', 'ID giao dịch không hợp lệ');
+      // Supabase
+      if (this.sb) {
+        const safeUpdates: any = { ...updates };
+        delete safeUpdates.id;
+        delete safeUpdates.created_at;
+        const { error } = await this.sb.from('transactions').update(safeUpdates).eq('id', id);
+        if (error) throw new DatabaseException('UPDATE_ERROR', error.message as any);
+        return;
       }
 
       const setClause = Object.keys(updates)
@@ -268,7 +321,7 @@ class DatabaseManager {
 
       const result = await this.db!.runAsync(
         `UPDATE transactions SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [...values, id]
+        [...values, Number(id)]
       );
 
       if (result.changes === 0) {
@@ -282,16 +335,20 @@ class DatabaseManager {
     }
   }
 
-  async deleteTransaction(id: number): Promise<void> {
+  async deleteTransaction(id: string): Promise<void> {
     await this.ensureInitialized();
     
     try {
-      if (!Number.isInteger(id) || id <= 0) {
+      if (this.sb) {
+        const { error } = await this.sb.from('transactions').delete().eq('id', id);
+        if (error) throw new DatabaseException('DELETE_ERROR', error.message as any);
+        return;
+      }
+      const numericId = Number(id);
+      if (!Number.isInteger(numericId) || numericId <= 0) {
         throw new DatabaseException('INVALID_ID', 'ID giao dịch không hợp lệ');
       }
-
-      const result = await this.db!.runAsync(`DELETE FROM transactions WHERE id = ?`, [id]);
-
+      const result = await this.db!.runAsync(`DELETE FROM transactions WHERE id = ?`, [numericId]);
       if (result.changes === 0) {
         throw new DatabaseException('TRANSACTION_NOT_FOUND', 'Không tìm thấy giao dịch để xóa');
       }
@@ -305,6 +362,20 @@ class DatabaseManager {
 
   // Analytics functions
   async getTotalsByType(startDate?: string, endDate?: string): Promise<{ income: number; expense: number }> {
+    if (this.sb) {
+      // Fetch and reduce client-side for simplicity
+      let q = this.sb.from('transactions').select('amount,type,date');
+      if (startDate) q = q.gte('date', startDate);
+      if (endDate) q = q.lte('date', endDate);
+      const { data, error } = await q;
+      if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+      const totals = { income: 0, expense: 0 } as { income: number; expense: number };
+      (data || []).forEach(r => {
+        if (r.type === 'income') totals.income += Number(r.amount);
+        if (r.type === 'expense') totals.expense += Number(r.amount);
+      });
+      return totals;
+    }
     if (!this.db) throw new Error('Database not initialized');
 
     let query = `
@@ -341,6 +412,22 @@ class DatabaseManager {
   }
 
   async getTransactionsByCategory(type?: 'income' | 'expense'): Promise<{ category: string; total: number; count: number }[]> {
+    if (this.sb) {
+      let q = this.sb.from('transactions').select('category, amount, type');
+      if (type) q = q.eq('type', type);
+      const { data, error } = await q;
+      if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+      const map = new Map<string, { total: number; count: number }>();
+      (data || []).forEach(r => {
+        const key = r.category as string;
+        const prev = map.get(key) || { total: 0, count: 0 };
+        prev.total += Number(r.amount);
+        prev.count += 1;
+        map.set(key, prev);
+      });
+      return Array.from(map.entries()).map(([category, v]) => ({ category, total: v.total, count: v.count }))
+        .sort((a, b) => b.total - a.total);
+    }
     if (!this.db) throw new Error('Database not initialized');
 
     let query = `
@@ -364,6 +451,16 @@ class DatabaseManager {
   }
 
   async searchTransactions(searchTerm: string): Promise<Transaction[]> {
+    if (this.sb) {
+      const { data, error } = await this.sb
+        .from('transactions')
+        .select('*')
+        .or(`description.ilike.%${searchTerm}%,category.ilike.%${searchTerm}%`)
+        .order('date', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+      return (data || []) as Transaction[];
+    }
     if (!this.db) throw new Error('Database not initialized');
 
     const result = await this.db.getAllAsync(
@@ -373,30 +470,39 @@ class DatabaseManager {
       [`%${searchTerm}%`, `%${searchTerm}%`]
     );
 
-    return result as Transaction[];
+    return (result as any[]).map(r => ({ ...r, id: r.id != null ? String(r.id) : undefined })) as Transaction[];
   }
 
   // Add multiple transactions (for AI batch import)
-  async addTransactionsBatch(transactions: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>[]): Promise<number[]> {
+  async addTransactionsBatch(transactions: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>[]): Promise<string[]> {
+    await this.ensureInitialized();
+    if (this.sb) {
+      const payload = transactions.map(t => ({
+        amount: t.amount,
+        description: t.description.trim(),
+        category: t.category.trim(),
+        date: t.date,
+        type: t.type,
+        source: t.source
+      }));
+      const { data, error } = await this.sb.from('transactions').insert(payload).select('id');
+      if (error) throw new DatabaseException('BATCH_INSERT_ERROR', error.message as any);
+      return (data || []).map(r => r.id as string);
+    }
+
     if (!this.db) throw new Error('Database not initialized');
-
-    const ids: number[] = [];
-
-    // Use transaction for batch insert
+    const ids: string[] = [];
     await this.db.withTransactionAsync(async () => {
       for (const transaction of transactions) {
         const { amount, description, category, date, type, source } = transaction;
-        
         const result = await this.db!.runAsync(
           `INSERT INTO transactions (amount, description, category, date, type, source) 
            VALUES (?, ?, ?, ?, ?, ?)`,
           [amount, description, category, date, type, source]
         );
-        
-        ids.push(result.lastInsertRowId);
+        ids.push(String(result.lastInsertRowId));
       }
     });
-
     return ids;
   }
 }

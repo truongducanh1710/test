@@ -1,8 +1,17 @@
-# Welcome to your Expo app 👋
+# Personal Finance Tracker 💰
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A smart React Native app that helps you track personal finances with AI-powered bank statement recognition.
 
-## Get started
+## ✨ Features
+
+- 📸 **AI Bank Statement Reading**: Take photos of Vietnamese bank statements and automatically extract transactions using OpenAI gpt-4o-mini
+- 💰 **Manual Transaction Entry**: Add income and expenses manually with smart categorization
+- 📊 **Financial Dashboard**: View balance, monthly summaries, spending categories, and trends
+- 🔍 **Advanced Search**: Filter and search transactions by amount, date, category, or description  
+- 🌙 **Dark/Light Mode**: Automatic theme switching based on system preferences
+- 📱 **Cross-platform**: Works on iOS, Android, and Web
+
+## 🚀 Quick Start
 
 1. Install dependencies
 
@@ -10,41 +19,62 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    npm install
    ```
 
-2. Start the app
+2. Set up OpenAI API (optional)
+   
+   Create a `.env` file:
+   ```
+   EXPO_PUBLIC_OPENAI_API_KEY=
+   ```
+
+3. Start the app
 
    ```bash
    npx expo start
    ```
 
-In the output, you'll find options to open the app in a
+4. Run on your device
+   - **Web**: Press `w` to open in browser
+   - **iOS**: Use Expo Go app or iOS Simulator  
+   - **Android**: Use Expo Go app or Android Emulator
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+> **Note**: Without an OpenAI API key, the app uses mock data for AI demonstrations.
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+## 📖 How to Use
 
-## Get a fresh project
+### Scan Bank Statement
+1. Tap "Quét Sao Kê" on the home screen
+2. Point camera at your Vietnamese bank statement  
+3. Take photo or select from gallery
+4. AI extracts transactions automatically
+5. Review and save to your database
 
-When you're ready, run:
+### Manual Entry  
+1. Tap "Thêm Giao Dịch" 
+2. Enter amount, description, and category
+3. Choose income or expense type
+4. Select date and save
 
-```bash
-npm run reset-project
-```
+### View Analytics
+- Check your dashboard for spending insights
+- Browse transaction history with search/filter
+- View spending by category and trends
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## 🏗️ Tech Stack
 
-## Learn more
+- **React Native + Expo**: Cross-platform mobile development
+- **SQLite**: Local database for transaction storage  
+- **OpenAI gpt-4o-mini**: AI-powered Vietnamese text extraction
+- **TypeScript**: Type-safe development
+- **Expo Router**: File-based navigation
 
-To learn more about developing your project with Expo, look at the following resources:
+## 📄 Documentation
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+For detailed setup instructions and troubleshooting, see [SETUP.md](./SETUP.md).
 
-## Join the community
+## 🇻🇳 Vietnamese Support
 
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+This app is specifically designed for Vietnamese users with:
+- Full Vietnamese localization
+- Support for major Vietnamese banks (VCB, TCB, BIDV, VietinBank)
+- Vietnamese currency formatting (VND)
+- AI trained on Vietnamese bank statement formats

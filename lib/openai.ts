@@ -17,46 +17,58 @@ export interface AIExtractedTransaction {
 
 export class OpenAIService {
   static async extractTransactionsFromImage(imageUri: string): Promise<AIExtractedTransaction[]> {
-    try {
-      // Convert image to base64
-      const base64Image = await this.convertImageToBase64(imageUri);
+    return await this.retryWithBackoff(async () => {
+      try {
+        // Convert image to base64 with size optimization
+        const base64Image = await this.convertImageToBase64(imageUri);
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4-vision-preview",
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: this.createVietnameseBankStatementPrompt(),
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:image/jpeg;base64,${base64Image}`,
+        const response = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: this.createVietnameseBankStatementPrompt(),
                 },
-              },
-            ],
-          },
-        ],
-        max_tokens: 2000,
-        temperature: 0.1, // Low temperature for more consistent results
-      });
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:image/jpeg;base64,${base64Image}`,
+                  },
+                },
+              ],
+            },
+          ],
+          max_tokens: 2000,
+          temperature: 0.1, // Low temperature for more consistent results
+        });
 
-      const content = response.choices[0]?.message?.content;
-      if (!content) {
-        throw new Error('No response from OpenAI');
+        const content = response.choices[0]?.message?.content;
+        if (!content) {
+          throw new Error('Không nhận được phản hồi từ OpenAI');
+        }
+
+        // Parse and validate the JSON response
+        const transactions = this.safeParseTransactions(content);
+        return transactions;
+
+      } catch (error: any) {
+        console.error('Error extracting transactions from image:', error);
+        
+        // More specific error messages
+        if (error.message?.includes('API key')) {
+          throw new Error('Khóa API OpenAI không hợp lệ. Vui lòng kiểm tra cấu hình.');
+        } else if (error.message?.includes('quota')) {
+          throw new Error('Đã vượt quá giới hạn API OpenAI. Vui lòng thử lại sau.');
+        } else if (error.message?.includes('rate limit')) {
+          throw new Error('Quá nhiều yêu cầu. Vui lòng thử lại sau 1 phút.');
+        }
+        
+        throw new Error('Không thể xử lý ảnh. Vui lòng thử lại hoặc chọn ảnh khác.');
       }
-
-      // Parse the JSON response
-      const transactions = this.parseAIResponse(content);
-      return transactions;
-
-    } catch (error) {
-      console.error('Error extracting transactions from image:', error);
-      throw new Error('Failed to process image. Please try again.');
-    }
+    });
   }
 
   private static createVietnameseBankStatementPrompt(): string {
@@ -106,7 +118,12 @@ Chỉ trả về JSON array, không có text khác.
   private static async convertImageToBase64(imageUri: string): Promise<string> {
     try {
       const response = await fetch(imageUri);
-      const blob = await response.blob();
+      let blob = await response.blob();
+      
+      // Check if image is too large (> 5MB) and compress if needed
+      if (blob.size > 5 * 1024 * 1024) {
+        blob = await this.compressImage(blob);
+      }
       
       return new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -120,11 +137,84 @@ Chỉ trả về JSON array, không có text khác.
         reader.readAsDataURL(blob);
       });
     } catch (error) {
-      throw new Error('Failed to convert image to base64');
+      throw new Error('Không thể chuyển đổi ảnh sang base64');
     }
   }
 
-  private static parseAIResponse(response: string): AIExtractedTransaction[] {
+  private static async compressImage(blob: Blob): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const img = new Image();
+      
+      img.onload = () => {
+        // Calculate new dimensions (max 1920x1080)
+        let { width, height } = img;
+        const maxWidth = 1920;
+        const maxHeight = 1080;
+        
+        if (width > maxWidth || height > maxHeight) {
+          const ratio = Math.min(maxWidth / width, maxHeight / height);
+          width = width * ratio;
+          height = height * ratio;
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        
+        // Draw and compress
+        ctx?.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(
+          (compressedBlob) => {
+            if (compressedBlob) {
+              resolve(compressedBlob);
+            } else {
+              reject(new Error('Compression failed'));
+            }
+          },
+          'image/jpeg',
+          0.8 // 80% quality
+        );
+      };
+      
+      img.onerror = reject;
+      img.src = URL.createObjectURL(blob);
+    });
+  }
+
+  private static async retryWithBackoff<T>(
+    operation: () => Promise<T>,
+    maxRetries: number = 2,
+    baseDelay: number = 1000
+  ): Promise<T> {
+    let lastError: Error;
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error: any) {
+        lastError = error;
+        
+        // Don't retry on certain errors
+        if (
+          error.message?.includes('API key') ||
+          error.message?.includes('quota') ||
+          attempt === maxRetries
+        ) {
+          throw error;
+        }
+        
+        // Wait before retrying with exponential backoff
+        const delay = baseDelay * Math.pow(2, attempt);
+        console.log(`Thử lại sau ${delay}ms... (lần thử ${attempt + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    throw lastError!;
+  }
+
+  private static safeParseTransactions(response: string): AIExtractedTransaction[] {
     try {
       // Clean the response - remove markdown code blocks if present
       let cleanResponse = response.trim();
@@ -137,15 +227,124 @@ Chỉ trả về JSON array, không có text khác.
       const transactions = JSON.parse(cleanResponse);
       
       if (!Array.isArray(transactions)) {
-        throw new Error('Response is not an array');
+        throw new Error('Phản hồi không phải là mảng giao dịch');
       }
 
-      // Validate each transaction
-      return transactions.filter(transaction => this.validateTransaction(transaction));
+      // Validate and normalize each transaction
+      const validTransactions = transactions
+        .map(transaction => this.normalizeTransaction(transaction))
+        .filter(transaction => transaction !== null) as AIExtractedTransaction[];
+      
+      if (validTransactions.length === 0) {
+        throw new Error('Không tìm thấy giao dịch hợp lệ trong ảnh');
+      }
+
+      return validTransactions;
 
     } catch (error) {
       console.error('Error parsing AI response:', error);
-      throw new Error('Failed to parse AI response. Please try again.');
+      
+      // Try fallback parsing methods
+      const fallbackTransactions = this.tryFallbackParsing(response);
+      if (fallbackTransactions.length > 0) {
+        return fallbackTransactions;
+      }
+      
+      throw new Error('Không thể phân tích phản hồi từ AI. Vui lòng thử lại với ảnh rõ hơn.');
+    }
+  }
+
+  private static normalizeTransaction(transaction: any): AIExtractedTransaction | null {
+    try {
+      // Validate required fields
+      if (!transaction || typeof transaction !== 'object') {
+        return null;
+      }
+
+      // Normalize amount - convert string to number if needed
+      let amount = transaction.amount;
+      if (typeof amount === 'string') {
+        amount = parseFloat(amount.replace(/[,\.]/g, ''));
+      }
+      if (!amount || amount <= 0) {
+        return null;
+      }
+
+      // Validate description
+      const description = transaction.description?.trim();
+      if (!description || description.length === 0) {
+        return null;
+      }
+
+      // Normalize date to YYYY-MM-DD format
+      let date = transaction.date;
+      if (typeof date === 'string') {
+        // Try to parse various date formats
+        const dateMatch = date.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+        if (dateMatch) {
+          const [, day, month, year] = dateMatch;
+          date = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+        } else if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          // If date format is invalid, use current date
+          date = new Date().toISOString().split('T')[0];
+        }
+      }
+
+      // Normalize type
+      let type = transaction.type;
+      if (type !== 'income' && type !== 'expense') {
+        // Try to infer from keywords or amount sign
+        if (amount < 0 || description.toLowerCase().includes('chi') || description.toLowerCase().includes('rút')) {
+          type = 'expense';
+          amount = Math.abs(amount);
+        } else {
+          type = 'expense'; // Default to expense for bank statements
+        }
+      }
+
+      // Normalize confidence
+      let confidence = transaction.confidence || 0.8;
+      if (confidence > 1) confidence = 1;
+      if (confidence < 0) confidence = 0;
+
+      return {
+        amount,
+        description,
+        date,
+        type,
+        confidence
+      };
+
+    } catch (error) {
+      console.error('Error normalizing transaction:', error);
+      return null;
+    }
+  }
+
+  private static tryFallbackParsing(response: string): AIExtractedTransaction[] {
+    try {
+      // Try to extract JSON-like patterns from the response
+      const jsonPattern = /\{[^{}]*"amount"[^{}]*\}/g;
+      const matches = response.match(jsonPattern) || [];
+      
+      const transactions: AIExtractedTransaction[] = [];
+      for (const match of matches) {
+        try {
+          const transaction = JSON.parse(match);
+          const normalized = this.normalizeTransaction(transaction);
+          if (normalized) {
+            transactions.push(normalized);
+          }
+        } catch (error) {
+          // Skip invalid JSON blocks
+          continue;
+        }
+      }
+      
+      return transactions;
+    } catch (error) {
+      console.error('Fallback parsing failed:', error);
+      return [];
     }
   }
 
@@ -168,7 +367,7 @@ Chỉ trả về JSON array, không có text khác.
   static async testConnection(): Promise<boolean> {
     try {
       const response = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
+        model: "gpt-4o-mini",
         messages: [{ role: "user", content: "Hello" }],
         max_tokens: 5,
       });
@@ -184,7 +383,7 @@ Chỉ trả về JSON array, không có text khác.
   static async improveTransactionDescription(description: string): Promise<string> {
     try {
       const response = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",

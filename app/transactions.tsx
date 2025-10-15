@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   StyleSheet, 
   Pressable, 
   Dimensions, 
   Alert, 
-  FlatList, 
+  SectionList,
   TextInput,
   RefreshControl,
   ActivityIndicator,
@@ -13,6 +13,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -32,6 +33,8 @@ import {
 
 const { width } = Dimensions.get('window');
 
+type Section = { title: string; data: Transaction[] };
+
 export default function TransactionsScreen() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,7 +44,7 @@ export default function TransactionsScreen() {
   const [sortOptions, setSortOptions] = useState<SortOptions>({ field: 'date', order: 'desc' });
   const [showFilters, setShowFilters] = useState(false);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
-  const [selectedTransactions, setSelectedTransactions] = useState<Set<number>>(new Set());
+  const [selectedTransactions, setSelectedTransactions] = useState<Set<string>>(new Set());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [datePickerType, setDatePickerType] = useState<'from' | 'to'>('from');
   
@@ -169,7 +172,7 @@ export default function TransactionsScreen() {
     }
   };
 
-  const toggleTransactionSelection = (id: number) => {
+  const toggleTransactionSelection = (id: string) => {
     const newSelection = new Set(selectedTransactions);
     if (newSelection.has(id)) {
       newSelection.delete(id);
@@ -183,8 +186,9 @@ export default function TransactionsScreen() {
     }
   };
 
+
   const selectAllTransactions = () => {
-    const allIds = new Set(transactions.map(t => t.id!));
+    const allIds = new Set(transactions.map(t => t.id!.toString()));
     setSelectedTransactions(allIds);
   };
 
@@ -264,31 +268,69 @@ export default function TransactionsScreen() {
     return filterCount + (searchTerm ? 1 : 0);
   };
 
+  const formatSectionTitle = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const today = new Date();
+    const ymd = (dt: Date) => dt.toISOString().slice(0,10);
+    const title = (() => {
+      if (ymd(d) === ymd(today)) return 'Hôm nay';
+      const yesterday = new Date();
+      yesterday.setDate(today.getDate() - 1);
+      if (ymd(d) === ymd(yesterday)) return 'Hôm qua';
+      return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    })();
+    return title;
+  };
+
+  const sections: Section[] = useMemo(() => {
+    const groups = new Map<string, Transaction[]>();
+    for (const t of transactions) {
+      const key = new Date(t.date).toISOString().slice(0,10);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(t);
+    }
+    const sortedKeys = Array.from(groups.keys()).sort((a,b) => (a > b ? -1 : 1));
+    return sortedKeys.map(k => ({ title: formatSectionTitle(k), data: groups.get(k)!.sort((a,b) => (a.date < b.date ? 1 : -1)) }));
+  }, [transactions]);
+
+  const renderLeftActions = (item: Transaction) => (_progress: any, _dragX: any) => (
+    <Pressable
+      style={[styles.leftAction, { backgroundColor: '#ef4444' }]}
+      onPress={() => handleDeleteTransaction(item)}
+    >
+      <Ionicons name="trash" size={24} color="white" />
+      <ThemedText style={styles.leftActionText}>Xóa</ThemedText>
+    </Pressable>
+  );
+
   const renderTransaction = ({ item }: { item: Transaction }) => {
-    const isSelected = selectedTransactions.has(item.id!);
+    const isSelected = selectedTransactions.has(item.id!.toString());
     
     return (
-      <ThemedView style={[styles.transactionRow, isSelected && styles.selectedTransactionRow]}>
-        {isSelectionMode && (
-          <Pressable 
-            style={styles.selectionCheckbox}
-            onPress={() => toggleTransactionSelection(item.id!)}
-          >
-            <Ionicons 
-              name={isSelected ? 'checkbox' : 'square-outline'} 
-              size={24} 
-              color={isSelected ? tintColor : '#666'} 
+      <Swipeable renderLeftActions={renderLeftActions(item)} overshootLeft={false}>
+        <ThemedView style={[styles.transactionRow, isSelected && styles.selectedTransactionRow]}>
+          {isSelectionMode && (
+            <Pressable 
+              style={styles.selectionCheckbox}
+              onPress={() => toggleTransactionSelection(item.id!)}
+            >
+              <Ionicons 
+                name={isSelected ? 'checkbox' : 'square-outline'} 
+                size={24} 
+                color={isSelected ? tintColor : '#666'} 
+              />
+            </Pressable>
+          )}
+          <ThemedView style={styles.transactionCardWrapper}>
+            <TransactionCard
+              transaction={item}
+              onPress={handleTransactionPress}
+              onLongPress={handleTransactionLongPress}
+              hideDate
             />
-          </Pressable>
-        )}
-        <ThemedView style={styles.transactionCardWrapper}>
-          <TransactionCard
-            transaction={item}
-            onPress={handleTransactionPress}
-            onLongPress={handleTransactionLongPress}
-          />
+          </ThemedView>
         </ThemedView>
-      </ThemedView>
+      </Swipeable>
     );
   };
 
@@ -411,11 +453,17 @@ export default function TransactionsScreen() {
   }
 
   return (
-    <ThemedView style={[styles.container, { backgroundColor }]}>
-      <FlatList
-        data={transactions}
-        keyExtractor={(item) => item.id?.toString() || ''}
+    <GestureHandlerRootView style={{ flex: 1 }}>
+    <ThemedView style={[styles.container, { backgroundColor }]}> 
+      <SectionList
+        sections={sections}
+        keyExtractor={(item) => item.id || ''}
         renderItem={renderTransaction}
+        renderSectionHeader={({ section }) => (
+          <ThemedView style={styles.sectionHeader}>
+            <ThemedText style={styles.sectionHeaderText}>{section.title}</ThemedText>
+          </ThemedView>
+        )}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={renderEmptyState}
         refreshControl={
@@ -423,6 +471,7 @@ export default function TransactionsScreen() {
         }
         showsVerticalScrollIndicator={false}
         contentContainerStyle={transactions.length === 0 ? styles.emptyContainer : undefined}
+        stickySectionHeadersEnabled={false}
       />
 
       {/* Filter Modal */}
@@ -460,6 +509,7 @@ export default function TransactionsScreen() {
         <Ionicons name="add" size={24} color="white" />
       </Pressable>
     </ThemedView>
+    </GestureHandlerRootView>
   );
 }
 
@@ -691,5 +741,29 @@ const styles = StyleSheet.create({
   transactionCardWrapper: {
     flex: 1,
     backgroundColor: 'transparent',
+  },
+  sectionHeader: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    backgroundColor: 'transparent',
+  },
+  sectionHeaderText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  leftAction: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 100,
+    marginVertical: 4,
+    borderTopRightRadius: 12,
+    borderBottomRightRadius: 12,
+  },
+  leftActionText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 4,
   },
 });

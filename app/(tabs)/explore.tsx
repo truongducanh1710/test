@@ -158,7 +158,7 @@ export default function FinanceScreen() {
 
       {/* Top Categories */}
       {topCategories.length > 0 && (
-        <ThemedView style={styles.categoriesContainer}>
+        <ThemedView style={[styles.categoriesContainer, { backgroundColor: cardBg }]}> 
           <ThemedText type="title" style={styles.sectionTitle}>Danh Mục Chi Tiêu Hàng Đầu</ThemedText>
           {topCategories.map((category) => (
             <ThemedView key={category.category} style={styles.categoryItem}>
@@ -168,7 +168,7 @@ export default function FinanceScreen() {
                   {formatCurrency(category.total)}
                 </ThemedText>
               </ThemedView>
-              <ThemedView style={styles.categoryBar}>
+              <ThemedView style={[styles.categoryBar, { backgroundColor: dividerColor }]}>
                 <ThemedView 
                   style={[
                     styles.categoryBarFill, 
@@ -188,7 +188,7 @@ export default function FinanceScreen() {
       )}
 
       {/* Monthly Trends */}
-      <ThemedView style={styles.trendsContainer}>
+      <ThemedView style={[styles.trendsContainer, { backgroundColor: cardBg }]}>
         <ThemedText type="title" style={styles.sectionTitle}>Xu Hướng 6 Tháng Gần Đây</ThemedText>
         <ThemedView style={styles.trendsChart}>
           {monthlyData.map((month, index) => {
@@ -230,7 +230,7 @@ export default function FinanceScreen() {
       </ThemedView>
 
       {/* Financial Tools */}
-      <ThemedView style={styles.toolsContainer}>
+      <ThemedView style={[styles.toolsContainer, { backgroundColor: cardBg }]}>
         <ThemedText type="title" style={styles.sectionTitle}>Công Cụ Tài Chính</ThemedText>
         
         <ThemedView style={styles.toolsGrid}>
@@ -400,8 +400,7 @@ const styles = StyleSheet.create({
   },
   categoriesContainer: {
     margin: 20,
-    // @ts-ignore theme-provided color via variable in component scope
-    backgroundColor: (undefined as any) || (cardBg as unknown as string),
+    backgroundColor: 'transparent',
     borderRadius: 15,
     padding: 20,
     elevation: 2,
@@ -432,8 +431,7 @@ const styles = StyleSheet.create({
   categoryBar: {
     flex: 2,
     height: 6,
-    // @ts-ignore theme-provided color via variable in component scope
-    backgroundColor: (undefined as any) || (dividerColor as unknown as string),
+    backgroundColor: '#e5e7eb',
     borderRadius: 3,
     marginHorizontal: 15,
     overflow: 'hidden',
@@ -450,8 +448,7 @@ const styles = StyleSheet.create({
   },
   trendsContainer: {
     margin: 20,
-    // @ts-ignore theme-provided color via variable in component scope
-    backgroundColor: (undefined as any) || (cardBg as unknown as string),
+    backgroundColor: 'transparent',
     borderRadius: 15,
     padding: 20,
     elevation: 2,
@@ -513,8 +510,7 @@ const styles = StyleSheet.create({
   },
   toolsContainer: {
     margin: 20,
-    // @ts-ignore theme-provided color via variable in component scope
-    backgroundColor: (undefined as any) || (cardBg as unknown as string),
+    backgroundColor: 'transparent',
     borderRadius: 15,
     padding: 20,
     elevation: 2,

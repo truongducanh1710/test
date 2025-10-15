@@ -7,17 +7,19 @@ import {
   ActivityIndicator,
   Dimensions,
   StatusBar,
+  Modal,
 } from 'react-native';
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { OpenAIService, isOpenAIConfigured, getMockTransactions } from '@/lib/openai';
+import { OpenAIService, isOpenAIConfigured } from '@/lib/openai';
 import { database, getCategoryFromDescription } from '@/lib/database';
 import { CameraState, ProcessingResult } from '@/types/transaction';
 
@@ -28,6 +30,11 @@ export default function CameraScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraState, setCameraState] = useState<CameraState>('idle');
   const [processingResult, setProcessingResult] = useState<ProcessingResult | null>(null);
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [cameraLayout, setCameraLayout] = useState({ width: 0, height: 0 });
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [pendingToSave, setPendingToSave] = useState<{ amount: number; description: string; category: string; date: string; type: 'income' | 'expense'; source: 'ai' }[]>([]);
   
   const cameraRef = useRef<CameraView>(null);
   const router = useRouter();
@@ -74,6 +81,11 @@ export default function CameraScreen() {
   const takePicture = async () => {
     if (!cameraRef.current) return;
 
+    if (!isOpenAIConfigured()) {
+      setShowApiKeyModal(true);
+      return;
+    }
+
     setCameraState('taking_photo');
     
     try {
@@ -84,7 +96,17 @@ export default function CameraScreen() {
       });
 
       if (photo) {
-        await processImage(photo.uri);
+        setCameraState('processing');
+        const extracted = await processImage(photo.uri);
+        if (extracted.length === 0) {
+          setCameraState('error');
+          Alert.alert('Không Tìm Thấy Giao Dịch', 'Không thể tìm thấy giao dịch nào trong ảnh. Vui lòng thử lại với ảnh rõ hơn.');
+          return;
+        }
+        setPendingToSave(extracted);
+        setSelectedDate(new Date());
+        setShowDateModal(true);
+        setCameraState('idle');
       }
     } catch (error) {
       console.error('Error taking picture:', error);
@@ -97,14 +119,33 @@ export default function CameraScreen() {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [9, 16],
+        allowsEditing: false,
         quality: 1.0,
-        allowsMultipleSelection: false,
+        allowsMultipleSelection: true,
       });
 
+      if (!isOpenAIConfigured()) {
+        setShowApiKeyModal(true);
+        return;
+      }
+
       if (!result.canceled && result.assets[0]) {
-        await processImage(result.assets[0].uri);
+        setCameraState('processing');
+        const uris = result.assets.map(a => a.uri).filter(Boolean) as string[];
+        const all: { amount: number; description: string; category: string; date: string; type: 'income' | 'expense'; source: 'ai' }[] = [];
+        for (const uri of uris) {
+          const extracted = await processImage(uri);
+          all.push(...extracted);
+        }
+        if (all.length === 0) {
+          setCameraState('error');
+          Alert.alert('Không Tìm Thấy Giao Dịch', 'Không thể tìm thấy giao dịch nào trong ảnh đã chọn.');
+          return;
+        }
+        setPendingToSave(all);
+        setSelectedDate(new Date());
+        setShowDateModal(true);
+        setCameraState('idle');
       }
     } catch (error) {
       console.error('Error picking image:', error);
@@ -113,28 +154,16 @@ export default function CameraScreen() {
   };
 
   const processImage = async (imageUri: string) => {
-    setCameraState('processing');
     const startTime = Date.now();
-
     try {
-      let transactions;
-      
-      if (isOpenAIConfigured()) {
-        // Use real OpenAI API
-        transactions = await OpenAIService.extractTransactionsFromImage(imageUri);
-      } else {
-        // Use mock data for demo
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Simulate processing time
-        transactions = getMockTransactions();
+      if (!isOpenAIConfigured()) {
+        throw new Error('Thiếu API key OpenAI');
       }
-
+      const transactions = await OpenAIService.extractTransactionsFromImage(imageUri);
       if (transactions.length === 0) {
-        setCameraState('error');
-        Alert.alert('Không Tìm Thấy Giao Dịch', 'Không thể tìm thấy giao dịch nào trong ảnh. Vui lòng thử lại với ảnh rõ hơn.');
-        return;
+        return [];
       }
-
-      // Save transactions to database
+      // Prepare but DO NOT SAVE yet
       const transactionsToSave = transactions.map(t => ({
         amount: t.amount,
         description: t.description,
@@ -143,42 +172,24 @@ export default function CameraScreen() {
         type: t.type,
         source: 'ai' as const,
       }));
-
-      const savedIds = await database.addTransactionsBatch(transactionsToSave);
-      
       const processingTime = Date.now() - startTime;
-      const result: ProcessingResult = {
-        success: true,
-        transactions,
-        processingTime,
-      };
-
+      const result: ProcessingResult = { success: true, transactions, processingTime };
       setProcessingResult(result);
-      setCameraState('success');
-
-      // Show success message
-      Alert.alert(
-        'Thành Công! 🎉',
-        `Đã tìm thấy ${transactions.length} giao dịch và thêm vào hồ sơ của bạn.`,
-        [
-          { text: 'Xem Giao Dịch', onPress: () => router.push('/transactions') },
-          { text: 'Chụp Tiếp', onPress: resetCamera },
-          { text: 'Về Trang Chủ', onPress: () => router.push('/') },
-        ]
-      );
-
+      return transactionsToSave;
     } catch (error) {
       console.error('Error processing image:', error);
-      setCameraState('error');
-      
       const result: ProcessingResult = {
         success: false,
         transactions: [],
         error: error instanceof Error ? error.message : 'Unknown error occurred',
       };
-      
       setProcessingResult(result);
-      Alert.alert('Xử Lý Thất Bại', result.error || 'Không thể xử lý ảnh. Vui lòng thử lại.');
+      if (!isOpenAIConfigured()) {
+        setShowApiKeyModal(true);
+      } else {
+        Alert.alert('Xử Lý Thất Bại', result.error || 'Không thể xử lý ảnh. Vui lòng thử lại.');
+      }
+      return [];
     }
   };
 
@@ -217,6 +228,74 @@ export default function CameraScreen() {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
       
+      {/* Missing API Key Modal */}
+      <Modal visible={showApiKeyModal} transparent animationType="fade" onRequestClose={() => setShowApiKeyModal(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <ThemedText style={styles.modalTitle}>Thiếu OpenAI API Key</ThemedText>
+            <ThemedText style={styles.modalText}>
+              Vui lòng thêm khóa vào file .env tại thư mục test/ và khởi động lại app:
+            </ThemedText>
+            <ThemedText style={styles.modalCode}>EXPO_PUBLIC_OPENAI_API_KEY=sk-xxxxxxxx</ThemedText>
+            <ThemedText style={styles.modalSubText}>Sau đó chạy: npx expo start -c</ThemedText>
+            <View style={styles.modalActions}>
+              <Pressable style={[styles.modalButton, { backgroundColor: tintColor }]} onPress={() => setShowApiKeyModal(false)}>
+                <ThemedText style={styles.modalButtonText}>Đóng</ThemedText>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Date Confirmation Modal */}
+      <Modal visible={showDateModal} transparent animationType="fade" onRequestClose={() => setShowDateModal(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <ThemedText style={styles.modalTitle}>Chọn ngày áp dụng cho tất cả</ThemedText>
+            <ThemedText style={styles.modalText}>Sẽ áp dụng ngày này cho {pendingToSave.length} giao dịch vừa nhận diện.</ThemedText>
+            <View style={{ alignItems: 'center', marginVertical: 12 }}>
+              <DateTimePicker
+                value={selectedDate}
+                mode="date"
+                display="default"
+                maximumDate={new Date()}
+                onChange={(_, d) => d && setSelectedDate(d)}
+              />
+            </View>
+            <View style={[styles.modalActions, { gap: 12 }]}>
+              <Pressable style={[styles.modalButton, { backgroundColor: '#374151' }]} onPress={() => { setShowDateModal(false); setPendingToSave([]); }}>
+                <ThemedText style={styles.modalButtonText}>Hủy</ThemedText>
+              </Pressable>
+              <Pressable
+                style={[styles.modalButton, { backgroundColor: tintColor }]}
+                onPress={async () => {
+                  try {
+                    const dateStr = selectedDate.toISOString().split('T')[0];
+                    const payload = pendingToSave.map(t => ({ ...t, date: dateStr }));
+                    await database.addTransactionsBatch(payload);
+                    setShowDateModal(false);
+                    setPendingToSave([]);
+                    Alert.alert(
+                      'Thành Công! 🎉',
+                      `Đã lưu ${payload.length} giao dịch.`,
+                      [
+                        { text: 'Xem Giao Dịch', onPress: () => router.push('/transactions') },
+                        { text: 'Chụp Tiếp', onPress: resetCamera },
+                      ]
+                    );
+                  } catch (e) {
+                    console.error(e);
+                    Alert.alert('Lỗi', 'Không thể lưu giao dịch. Vui lòng thử lại.');
+                  }
+                }}
+              >
+                <ThemedText style={styles.modalButtonText}>Áp dụng & Lưu</ThemedText>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      
       {/* Camera View */}
       <CameraView 
         style={styles.camera} 
@@ -240,21 +319,46 @@ export default function CameraScreen() {
         </LinearGradient>
 
         {/* Scanning Frame */}
-        <ThemedView style={styles.scanningFrame}>
-          <ThemedView style={[styles.frameCorner, styles.frameCornerTopLeft]} />
-          <ThemedView style={[styles.frameCorner, styles.frameCornerTopRight]} />
-          <ThemedView style={[styles.frameCorner, styles.frameCornerBottomLeft]} />
-          <ThemedView style={[styles.frameCorner, styles.frameCornerBottomRight]} />
-          <ThemedView style={styles.instructionContainer}>
-            <ThemedText style={styles.instructionTitle}>📱 Chụp Sao Kê</ThemedText>
-            <ThemedText style={styles.instructionText}>
-              Đặt toàn bộ sao kê trong khung
-            </ThemedText>
-            <ThemedText style={styles.instructionSubtext}>
-              Tỷ lệ 9:16 • Ánh sáng tốt • Không bóng mờ
-            </ThemedText>
-          </ThemedView>
-        </ThemedView>
+        <View
+          style={styles.scanningFrameContainer}
+          onLayout={(e) => {
+            const { width: w, height: h } = e.nativeEvent.layout;
+            setCameraLayout({ width: w, height: h });
+          }}
+        >
+          {(() => {
+            const margin = 20;
+            const w = Math.max(0, cameraLayout.width - margin * 2);
+            const h = Math.max(0, cameraLayout.height - margin * 2);
+            const frameW = Math.min(w, (h * 9) / 16);
+            const frameH = (frameW * 16) / 9;
+            const left = (cameraLayout.width - frameW) / 2;
+            const top = (cameraLayout.height - frameH) / 2;
+
+            return (
+              <ThemedView
+                style={[
+                  styles.scanningFrame,
+                  { top, left, width: frameW, height: frameH },
+                ]}
+              >
+                <ThemedView style={[styles.frameCorner, styles.frameCornerTopLeft]} />
+                <ThemedView style={[styles.frameCorner, styles.frameCornerTopRight]} />
+                <ThemedView style={[styles.frameCorner, styles.frameCornerBottomLeft]} />
+                <ThemedView style={[styles.frameCorner, styles.frameCornerBottomRight]} />
+                <ThemedView style={styles.instructionContainer}>
+                  <ThemedText style={styles.instructionTitle}>📱 Chụp Sao Kê</ThemedText>
+                  <ThemedText style={styles.instructionText}>
+                    Đặt toàn bộ sao kê trong khung
+                  </ThemedText>
+                  <ThemedText style={styles.instructionSubtext}>
+                    Tỷ lệ 9:16 • Ánh sáng tốt • Không bóng mờ
+                  </ThemedText>
+                </ThemedView>
+              </ThemedView>
+            );
+          })()}
+        </View>
 
         {/* Bottom Controls */}
         <LinearGradient
@@ -299,17 +403,11 @@ export default function CameraScreen() {
           </ThemedView>
 
           {/* API Status */}
-          <ThemedView style={styles.apiStatus}>
-            {isOpenAIConfigured() ? (
-              <ThemedText style={styles.apiStatusText}>
-                ✓ AI Sẵn Sàng - Xử lý thật đã kích hoạt
-              </ThemedText>
-            ) : (
-              <ThemedText style={styles.apiStatusText}>
-                ⚠️ Chế Độ Demo - Sử dụng dữ liệu mẫu
-              </ThemedText>
-            )}
-          </ThemedView>
+          {isOpenAIConfigured() && (
+            <ThemedView style={styles.apiStatus}>
+              <ThemedText style={styles.apiStatusText}>✓ AI đã kích hoạt</ThemedText>
+            </ThemedView>
+          )}
         </LinearGradient>
       </CameraView>
     </View>
@@ -322,6 +420,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'black',
   },
   camera: {
+    flex: 1,
+  },
+  cameraWrapper: {
     flex: 1,
   },
   loadingText: {
@@ -387,12 +488,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: 'white',
   },
+  scanningFrameContainer: {
+    ...StyleSheet.absoluteFillObject,
+  },
   scanningFrame: {
     position: 'absolute',
-    top: '20%',
-    left: '5%',
-    width: width * 0.9,
-    height: height * 0.55,
     borderWidth: 3,
     borderColor: '#00f2fe',
     borderRadius: 16,
@@ -564,5 +664,54 @@ const styles = StyleSheet.create({
     color: 'white',
     marginVertical: 8,
     textAlign: 'center',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    borderRadius: 16,
+    padding: 20,
+    backgroundColor: '#1f1f1f',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: 'white',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalText: {
+    color: 'rgba(255,255,255,0.9)',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  modalCode: {
+    fontFamily: 'monospace',
+    color: '#a7f3d0',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  modalSubText: {
+    color: 'rgba(255,255,255,0.7)',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  modalButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  modalButtonText: {
+    color: 'white',
+    fontWeight: '600',
   },
 });

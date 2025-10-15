@@ -44,11 +44,11 @@ export default function AddTransactionScreen() {
   // Load transaction for editing if ID is provided
   useEffect(() => {
     if (params.id) {
-      loadTransaction(parseInt(params.id as string));
+      loadTransaction(params.id as string);
     }
   }, [params.id]);
 
-  const loadTransaction = async (id: number) => {
+  const loadTransaction = async (id: string) => {
     try {
       setLoading(true);
       await database.init();
@@ -97,7 +97,7 @@ export default function AddTransactionScreen() {
       };
 
       if (isEditing && params.id) {
-        await database.updateTransaction(parseInt(params.id as string), transactionData);
+        await database.updateTransaction(params.id as string, transactionData);
         Alert.alert('Thành Công', 'Giao dịch đã được cập nhật!');
       } else {
         await database.addTransaction(transactionData);

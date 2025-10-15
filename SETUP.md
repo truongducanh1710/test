@@ -22,13 +22,16 @@ npm install
 For AI bank statement reading, you need an OpenAI API key:
 
 1. Sign up at [OpenAI Platform](https://platform.openai.com/)
-2. Create an API key
+2. Create an API key (requires billing setup for gpt-4o-mini)
 3. Create a `.env` file in the test directory:
 ```
 EXPO_PUBLIC_OPENAI_API_KEY=your_openai_api_key_here
 ```
 
-**Note**: Without an API key, the app will use mock data for demonstrations.
+**Note**: 
+- The app uses OpenAI's `gpt-4o-mini` model with vision capabilities for cost-effective image processing
+- Without an API key, the app will use mock data for demonstrations
+- Make sure your OpenAI account has sufficient credits and API access enabled
 
 ### 3. Start the Development Server
 ```bash
@@ -52,7 +55,7 @@ npx expo start
 ### Technology Stack
 - **Frontend**: React Native with Expo
 - **Database**: SQLite (local storage)
-- **AI Processing**: OpenAI GPT-4 Vision API
+- **AI Processing**: OpenAI GPT-4o-mini with Vision capabilities
 - **Navigation**: Expo Router
 - **UI Components**: Custom themed components with dark/light mode
 

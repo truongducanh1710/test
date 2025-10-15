@@ -96,9 +96,10 @@ interface TransactionCardProps {
   onLongPress?: (transaction: Transaction) => void;
   onEdit?: (transaction: Transaction) => void;
   onDelete?: (transaction: Transaction) => void;
+  hideDate?: boolean;
 }
 
-export function TransactionCard({ transaction, onPress, onLongPress, onEdit, onDelete }: TransactionCardProps) {
+export function TransactionCard({ transaction, onPress, onLongPress, onEdit, onDelete, hideDate }: TransactionCardProps) {
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
   const borderColor = textColor + '20';
@@ -170,9 +171,11 @@ export function TransactionCard({ transaction, onPress, onLongPress, onEdit, onD
 
         <ThemedView style={styles.fullCardFooter}>
           <ThemedView style={styles.metaInfo}>
-            <ThemedText style={styles.dateText}>
-              {formatFullDate(transaction.date)}
-            </ThemedText>
+            {!hideDate && (
+              <ThemedText style={styles.dateText}>
+                {formatFullDate(transaction.date)}
+              </ThemedText>
+            )}
             {transaction.source === 'ai' && (
               <ThemedView style={styles.aiTag}>
                 <Ionicons name="sparkles" size={12} color="#6366f1" />
