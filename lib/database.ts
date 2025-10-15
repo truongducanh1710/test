@@ -13,6 +13,32 @@ export interface Transaction {
   updated_at?: string;
 }
 
+// Budgeting models
+export interface Budget {
+  id?: string;
+  cycle: 'weekly' | 'monthly';
+  start_date: string; // yyyy-mm-dd start of cycle
+  rollover: boolean;
+  created_at?: string;
+  monthly_income?: number | null;
+}
+
+export interface Wallet {
+  id?: string;
+  budget_id: string;
+  name: string; // Essentials/Savings/Education/Lifestyle
+  percent?: number | null; // optional allocation
+  color?: string | null;
+}
+
+export interface CategoryBudget {
+  id?: string;
+  budget_id: string;
+  category: string;
+  wallet_id?: string | null;
+  limit_amount: number; // planned amount for cycle
+}
+
 export interface DatabaseError {
   code: string;
   message: string;
@@ -170,6 +196,102 @@ class DatabaseManager {
     }
   }
 
+  // ----- Cycle helpers -----
+  getCycleRange(date: Date, cycle: 'weekly' | 'monthly'): { start: string; end: string } {
+    if (cycle === 'monthly') {
+      const start = this.toDateString(new Date(date.getFullYear(), date.getMonth(), 1));
+      const end = this.toDateString(new Date(date.getFullYear(), date.getMonth() + 1, 0));
+      return { start, end };
+    }
+    // weekly (ISO: Monday-Sunday)
+    const day = date.getDay(); // 0 Sun..6 Sat
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+    const monday = new Date(date);
+    monday.setDate(date.getDate() + diffToMonday);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return { start: this.toDateString(monday), end: this.toDateString(sunday) };
+  }
+
+  // ----- Budget APIs (Supabase only; fallback: throw if not configured) -----
+  private assertSupabase() {
+    if (!this.sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+  }
+
+  async getActiveBudget(cycle?: 'weekly' | 'monthly'): Promise<Budget | null> {
+    await this.ensureInitialized();
+    this.assertSupabase();
+    let q = this.sb!.from('budgets').select('*').order('created_at', { ascending: false }).limit(1);
+    if (cycle) q = q.eq('cycle', cycle);
+    const { data, error } = await q;
+    if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+    return (data && data[0]) || null;
+  }
+
+  async upsertBudget(payload: Omit<Budget, 'id' | 'created_at'> & { id?: string }): Promise<string> {
+    await this.ensureInitialized();
+    this.assertSupabase();
+    const { data, error } = await this.sb!
+      .from('budgets')
+      .upsert(payload as any)
+      .select('id')
+      .single();
+    if (error) throw new DatabaseException('UPSERT_ERROR', error.message as any);
+    return data!.id as string;
+  }
+
+  async listWallets(budgetId: string): Promise<Wallet[]> {
+    await this.ensureInitialized();
+    this.assertSupabase();
+    const { data, error } = await this.sb!.from('wallets').select('*').eq('budget_id', budgetId).order('name');
+    if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+    return (data || []) as Wallet[];
+  }
+
+  async upsertWallets(wallets: Wallet[]): Promise<void> {
+    await this.ensureInitialized();
+    this.assertSupabase();
+    const { error } = await this.sb!.from('wallets').upsert(wallets as any);
+    if (error) throw new DatabaseException('UPSERT_ERROR', error.message as any);
+  }
+
+  async listCategoryBudgets(budgetId: string): Promise<CategoryBudget[]> {
+    await this.ensureInitialized();
+    this.assertSupabase();
+    const { data, error } = await this.sb!.from('category_budgets').select('*').eq('budget_id', budgetId);
+    if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+    return (data || []) as CategoryBudget[];
+  }
+
+  async upsertCategoryBudgets(items: CategoryBudget[]): Promise<void> {
+    await this.ensureInitialized();
+    this.assertSupabase();
+    const { error } = await this.sb!.from('category_budgets').upsert(items as any);
+    if (error) throw new DatabaseException('UPSERT_ERROR', error.message as any);
+  }
+
+  async getSpendByCategoryRange(start: string, end: string): Promise<Map<string, number>> {
+    const rows = await this.getTransactionsByCategory('expense', start, end);
+    const map = new Map<string, number>();
+    rows.forEach(r => map.set(r.category, r.total));
+    return map;
+  }
+
+  async getSpendByWalletRange(budgetId: string, start: string, end: string): Promise<Map<string, number>> {
+    const [categoryBudgets, spendByCat] = await Promise.all([
+      this.listCategoryBudgets(budgetId),
+      this.getSpendByCategoryRange(start, end),
+    ]);
+    const walletToSpend = new Map<string, number>();
+    categoryBudgets.forEach(cb => {
+      const spent = spendByCat.get(cb.category) || 0;
+      const key = cb.wallet_id || 'unassigned';
+      walletToSpend.set(key, (walletToSpend.get(key) || 0) + spent);
+    });
+    return walletToSpend;
+  }
+
+  // ----- Existing transactions APIs below -----
   // CRUD Operations
   async addTransaction(transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>): Promise<string> {
     await this.ensureInitialized();

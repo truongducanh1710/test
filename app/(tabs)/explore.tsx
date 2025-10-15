@@ -6,7 +6,8 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { database, formatCurrency } from '@/lib/database';
+import { database, formatCurrency, type Budget } from '@/lib/database';
+import { ensureNotificationPermissions, notifyBudgetThreshold, setupAndroidChannels, scheduleDailyDigest } from '@/lib/notifications';
 import { TransactionSummary, CategorySummary } from '@/types/transaction';
 
 const { width } = Dimensions.get('window');
@@ -24,6 +25,8 @@ interface MonthlyData {
 let financeSummaryCache: TransactionSummary | null = null;
 let financeMonthlyCache: MonthlyData[] | null = null;
 const financeTopCache: Map<string, CategorySummary[]> = new Map();
+// Budget cache
+let financeBudgetCache: { budget: Budget | null; wallets: { id: string; name: string; color?: string | null; spend: number; limit: number; usedPct: number }[] } | null = null;
 
 export default function FinanceScreen() {
   const [loading, setLoading] = useState(true);
@@ -40,6 +43,9 @@ export default function FinanceScreen() {
   const [showRangeModal, setShowRangeModal] = useState(false);
   const [loadingTop, setLoadingTop] = useState(false);
   const cacheRef = useRef<Map<string, CategorySummary[]>>(financeTopCache);
+  const [budgetLoading, setBudgetLoading] = useState(false);
+  const [budget, setBudget] = useState<Budget | null>(null);
+  const [walletProgress, setWalletProgress] = useState<{ id: string; name: string; color?: string | null; spend: number; limit: number; usedPct: number }[]>([]);
   
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
@@ -71,6 +77,10 @@ export default function FinanceScreen() {
       // Hydrate from module-level caches if available to avoid full-screen loading
       if (financeSummaryCache) setCurrentMonthSummary(financeSummaryCache);
       if (financeMonthlyCache) setMonthlyData(financeMonthlyCache);
+      if (financeBudgetCache) {
+        setBudget(financeBudgetCache.budget);
+        setWalletProgress(financeBudgetCache.wallets);
+      }
       const initialTop = cacheRef.current.get(cacheKeyOf(range));
       if (initialTop) setTopCategories(initialTop);
       setLoading(!(financeSummaryCache && financeMonthlyCache));
@@ -79,6 +89,8 @@ export default function FinanceScreen() {
         try {
           // Always refresh background
           await database.init();
+          await setupAndroidChannels();
+          await ensureNotificationPermissions();
           const now = new Date();
           // Summary
           const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
@@ -106,6 +118,11 @@ export default function FinanceScreen() {
           // Prefetch others
           fetchTopCategories('week', true);
           fetchTopCategories('lastMonth', true);
+
+          // Load budget & wallets progress
+          await loadBudgetAndWallets(range);
+          // schedule digest once (idempotent-ish; harmless if repeats)
+          scheduleDailyDigest(9).catch(() => {});
         } finally {
           setLoading(false);
         }
@@ -133,13 +150,58 @@ export default function FinanceScreen() {
     }
   };
 
+  const loadBudgetAndWallets = async (key: RangeKey) => {
+    setBudgetLoading(!financeBudgetCache);
+    const b = await database.getActiveBudget();
+    if (!b) {
+      setBudget(null);
+      setWalletProgress([]);
+      financeBudgetCache = { budget: null, wallets: [] };
+      setBudgetLoading(false);
+      return;
+    }
+    const now = new Date();
+    const { start, end } = getRangeDates(key, now);
+    const [wallets, catBudgets, spendByWallet] = await Promise.all([
+      database.listWallets(b.id!),
+      database.listCategoryBudgets(b.id!),
+      database.getSpendByWalletRange(b.id!, start, end),
+    ]);
+    const scale = key === 'week' ? 7 / 30 : 1;
+    const computed = wallets.map(w => {
+      const limitFromCats = catBudgets.filter(cb => cb.wallet_id === w.id).reduce((s, cb) => s + Number(cb.limit_amount || 0), 0);
+      const fallback = b.monthly_income && w.percent != null ? (Number(b.monthly_income) * (Number(w.percent) / 100)) : 0;
+      const limit = (limitFromCats > 0 ? limitFromCats : fallback) * scale;
+      const spend = spendByWallet.get(w.id!) || 0;
+      const usedPct = limit > 0 ? (spend / limit) * 100 : 0;
+      return { id: w.id!, name: w.name, color: w.color, spend, limit, usedPct };
+    });
+    setBudget(b);
+    setWalletProgress(computed);
+    financeBudgetCache = { budget: b, wallets: computed };
+    setBudgetLoading(false);
+
+    // Threshold notifications (80% warn, 100% critical)
+    try {
+      for (const w of computed) {
+        if (w.limit <= 0) continue;
+        const used = w.usedPct;
+        if (used >= 100) {
+          await notifyBudgetThreshold('⚠️ Vượt ngân sách', `${w.name}: đã vượt ${formatCurrency(w.spend)} / ${formatCurrency(w.limit)}`);
+        } else if (used >= 80) {
+          await notifyBudgetThreshold('Cảnh báo ngân sách', `${w.name}: ${used.toFixed(0)}% (${formatCurrency(w.spend)} / ${formatCurrency(w.limit)})`);
+        }
+      }
+    } catch {}
+  };
+
   const handleExportData = () => {
     Alert.alert('Xuất Dữ Liệu', 'Tính năng xuất dữ liệu sẽ ra mắt sớm!');
     setShowExportModal(false);
   };
 
   const handleBudgetManagement = () => {
-    Alert.alert('Quản Lý Ngân Sách', 'Tính năng quản lý ngân sách sẽ ra mắt sớm!');
+    router.push({ pathname: '/budget' } as any);
   };
 
   const handleFinancialGoals = () => {
@@ -157,7 +219,6 @@ export default function FinanceScreen() {
 
   return (
     <ScrollView style={[styles.container, { backgroundColor }]} showsVerticalScrollIndicator={false}>
-      
       {/* Financial Overview Header */}
       <LinearGradient
         colors={['#667eea', '#764ba2']}
@@ -190,6 +251,41 @@ export default function FinanceScreen() {
           <ThemedText style={styles.summaryAmount}>{formatCurrency(currentMonthSummary.totalExpense)}</ThemedText>
           <ThemedText style={styles.summaryLabel}>Chi Tiêu Tháng Này</ThemedText>
         </ThemedView>
+      </ThemedView>
+
+      {/* Budget Card (moved below summary) */}
+      <ThemedView style={[styles.categoriesContainer, { backgroundColor: cardBg }]}> 
+        <ThemedText type="title" style={styles.sectionTitle}>Ngân Sách</ThemedText>
+        {!budget ? (
+          <Pressable style={[styles.rangeSelector, { borderColor: tintColor + '60' }]} onPress={handleBudgetManagement}>
+            <ThemedText style={[styles.rangeSelectorText, { color: tintColor }]}>Thiết lập ngân sách</ThemedText>
+            <Ionicons name="chevron-forward" size={18} color={tintColor} />
+          </Pressable>
+        ) : walletProgress.length > 0 ? (
+          walletProgress.map(w => {
+            const barColor = w.usedPct < 80 ? tintColor : w.usedPct <= 100 ? '#f59e0b' : '#ef4444';
+            return (
+              <Pressable key={w.id} onPress={() => (router.push({ pathname: `/budget/${w.id}` } as any))}>
+                <ThemedView style={styles.categoryItem}>
+                  <ThemedView style={styles.categoryInfo}>
+                    <ThemedText style={styles.categoryName}>{w.name}</ThemedText>
+                    <ThemedText style={styles.categoryAmount}>
+                      {formatCurrency(w.spend)} / {formatCurrency(w.limit)}
+                    </ThemedText>
+                  </ThemedView>
+                  <ThemedView style={[styles.categoryBar, { backgroundColor: dividerColor }]}> 
+                    <ThemedView 
+                      style={[styles.categoryBarFill, { width: `${Math.min(100, w.usedPct)}%`, backgroundColor: barColor }]} 
+                    />
+                  </ThemedView>
+                  <ThemedText style={styles.categoryPercentage}>{w.usedPct.toFixed(0)}%</ThemedText>
+                </ThemedView>
+              </Pressable>
+            );
+          })
+        ) : (
+          <ThemedText style={{ opacity: 0.7 }}>{budgetLoading ? 'Đang tải...' : 'Không có dữ liệu'}</ThemedText>
+        )}
       </ThemedView>
 
       {/* Top Categories */}
