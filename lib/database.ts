@@ -69,6 +69,11 @@ class DatabaseManager {
   private db: SQLite.SQLiteDatabase | null = null;
   private isInitializing: boolean = false;
   private sb: SupabaseClient | null = null;
+  private toDateString(d: Date): string {
+    return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+      .toISOString()
+      .slice(0, 10);
+  }
 
   async init(): Promise<void> {
     if (this.db) {
@@ -411,10 +416,12 @@ class DatabaseManager {
     return totals;
   }
 
-  async getTransactionsByCategory(type?: 'income' | 'expense'): Promise<{ category: string; total: number; count: number }[]> {
+  async getTransactionsByCategory(type?: 'income' | 'expense', startDate?: string, endDate?: string): Promise<{ category: string; total: number; count: number }[]> {
     if (this.sb) {
-      let q = this.sb.from('transactions').select('category, amount, type');
+      let q = this.sb.from('transactions').select('category, amount, type, date');
       if (type) q = q.eq('type', type);
+      if (startDate) q = q.gte('date', startDate);
+      if (endDate) q = q.lte('date', endDate);
       const { data, error } = await q;
       if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
       const map = new Map<string, { total: number; count: number }>();
@@ -439,9 +446,12 @@ class DatabaseManager {
     `;
     const params: any[] = [];
 
-    if (type) {
-      query += ` WHERE type = ?`;
-      params.push(type);
+    const whereClauses: string[] = [];
+    if (type) { whereClauses.push(`type = ?`); params.push(type); }
+    if (startDate) { whereClauses.push(`date >= ?`); params.push(startDate); }
+    if (endDate) { whereClauses.push(`date <= ?`); params.push(endDate); }
+    if (whereClauses.length > 0) {
+      query += ` WHERE ` + whereClauses.join(' AND ');
     }
 
     query += ` GROUP BY category ORDER BY total DESC`;
@@ -504,6 +514,53 @@ class DatabaseManager {
       }
     });
     return ids;
+  }
+
+  // Seed helpers (for demo data)
+  async seedFakeMonthIfEmpty(month: number, year: number): Promise<boolean> {
+    await this.ensureInitialized();
+    const start = this.toDateString(new Date(year, month - 1, 1));
+    const end = this.toDateString(new Date(year, month, 0));
+
+    // Check existing
+    let hasData = false;
+    if (this.sb) {
+      const { count, error } = await this.sb
+        .from('transactions')
+        .select('id', { count: 'exact', head: true })
+        .gte('date', start)
+        .lte('date', end);
+      if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+      hasData = (count || 0) > 0;
+    } else {
+      const row = await this.db!.getFirstAsync(
+        `SELECT COUNT(*) as cnt FROM transactions WHERE date >= ? AND date <= ?`,
+        [start, end]
+      ) as { cnt: number } | null;
+      hasData = !!row && Number((row as any).cnt) > 0;
+    }
+    if (hasData) return false;
+
+    // Build sample records
+    const day = (d: number) => this.toDateString(new Date(year, month - 1, d));
+    const samples: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>[] = [
+      { amount: 6500000, description: 'Lương tháng', category: 'Lương', date: day(5), type: 'income', source: 'manual' },
+      { amount: 1200000, description: 'Ăn uống', category: 'Ăn uống', date: day(8), type: 'expense', source: 'manual' },
+      { amount: 800000, description: 'Xăng xe', category: 'Xăng xe', date: day(10), type: 'expense', source: 'manual' },
+      { amount: 950000, description: 'Mua sắm', category: 'Mua sắm', date: day(12), type: 'expense', source: 'manual' },
+      { amount: 2000000, description: 'Freelance', category: 'Lương', date: day(15), type: 'income', source: 'manual' },
+      { amount: 450000, description: 'Di chuyển', category: 'Di chuyển', date: day(18), type: 'expense', source: 'manual' },
+      { amount: 300000, description: 'Cafe & gặp gỡ', category: 'Ăn uống', date: day(22), type: 'expense', source: 'manual' },
+    ];
+
+    await this.addTransactionsBatch(samples);
+    return true;
+  }
+
+  async seedFakeMonthsIfEmpty(months: number[], year: number): Promise<void> {
+    for (const m of months) {
+      await this.seedFakeMonthIfEmpty(m, year);
+    }
   }
 }
 

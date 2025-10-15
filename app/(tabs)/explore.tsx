@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ScrollView, StyleSheet, Pressable, Dimensions, Alert, ActivityIndicator, Modal } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,12 +11,19 @@ import { TransactionSummary, CategorySummary } from '@/types/transaction';
 
 const { width } = Dimensions.get('window');
 
+type RangeKey = 'week' | 'thisMonth' | 'lastMonth';
+
 interface MonthlyData {
   month: string;
   income: number;
   expense: number;
   balance: number;
 }
+
+// Module-level caches to persist across tab unmounts
+let financeSummaryCache: TransactionSummary | null = null;
+let financeMonthlyCache: MonthlyData[] | null = null;
+const financeTopCache: Map<string, CategorySummary[]> = new Map();
 
 export default function FinanceScreen() {
   const [loading, setLoading] = useState(true);
@@ -29,6 +36,10 @@ export default function FinanceScreen() {
   const [topCategories, setTopCategories] = useState<CategorySummary[]>([]);
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [range, setRange] = useState<RangeKey>('thisMonth');
+  const [showRangeModal, setShowRangeModal] = useState(false);
+  const [loadingTop, setLoadingTop] = useState(false);
+  const cacheRef = useRef<Map<string, CategorySummary[]>>(financeTopCache);
   
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
@@ -36,64 +47,89 @@ export default function FinanceScreen() {
   const dividerColor = useThemeColor({ light: '#e5e7eb', dark: '#2a2a2a' }, 'background');
   const router = useRouter();
 
-  // Load data when screen focuses
+  // Helpers
+  const toDateString = (d: Date) => new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString().slice(0,10);
+  const getRangeDates = (key: RangeKey, base = new Date()) => {
+    if (key === 'thisMonth') return { start: toDateString(new Date(base.getFullYear(), base.getMonth(), 1)), end: toDateString(new Date(base.getFullYear(), base.getMonth() + 1, 0)) };
+    if (key === 'lastMonth') return { start: toDateString(new Date(base.getFullYear(), base.getMonth() - 1, 1)), end: toDateString(new Date(base.getFullYear(), base.getMonth(), 0)) };
+    const day = base.getDay();
+    const diffToMonday = (day === 0 ? -6 : 1 - day);
+    const monday = new Date(base);
+    monday.setDate(base.getDate() + diffToMonday);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return { start: toDateString(monday), end: toDateString(sunday) };
+  };
+  const cacheKeyOf = (key: RangeKey, base = new Date()) => {
+    const { start, end } = getRangeDates(key, base);
+    return `${key}:${start}_${end}`;
+  };
+
+  // Load base data once; hydrate from module cache; prefetch in background
   useFocusEffect(
     useCallback(() => {
-      loadFinanceData();
-    }, [])
+      // Hydrate from module-level caches if available to avoid full-screen loading
+      if (financeSummaryCache) setCurrentMonthSummary(financeSummaryCache);
+      if (financeMonthlyCache) setMonthlyData(financeMonthlyCache);
+      const initialTop = cacheRef.current.get(cacheKeyOf(range));
+      if (initialTop) setTopCategories(initialTop);
+      setLoading(!(financeSummaryCache && financeMonthlyCache));
+
+      (async () => {
+        try {
+          // Always refresh background
+          await database.init();
+          const now = new Date();
+          // Summary
+          const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+          const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+          const totals = await database.getTotalsByType(startOfMonth, endOfMonth);
+          const tx = await database.getTransactions(100);
+          const nextSummary = { totalIncome: totals.income, totalExpense: totals.expense, balance: totals.income - totals.expense, transactionCount: tx.length };
+          setCurrentMonthSummary(nextSummary);
+          financeSummaryCache = nextSummary;
+
+          // Monthly trends
+          const months: MonthlyData[] = [];
+          for (let i = 5; i >= 0; i--) {
+            const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const monthStart = monthDate.toISOString().split('T')[0];
+            const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0).toISOString().split('T')[0];
+            const monthTotals = await database.getTotalsByType(monthStart, monthEnd);
+            months.push({ month: monthDate.toLocaleDateString('vi-VN', { month: 'short' }), income: monthTotals.income, expense: monthTotals.expense, balance: monthTotals.income - monthTotals.expense });
+          }
+          setMonthlyData(months);
+          financeMonthlyCache = months;
+
+          // Ensure current range data exists
+          await fetchTopCategories(range, false);
+          // Prefetch others
+          fetchTopCategories('week', true);
+          fetchTopCategories('lastMonth', true);
+        } finally {
+          setLoading(false);
+        }
+      })();
+    }, [range])
   );
 
-  const loadFinanceData = async () => {
-    try {
-      setLoading(true);
-      await database.init();
-
-      // Get current month summary
-      const currentDate = new Date();
-      const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).toISOString().split('T')[0];
-      const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).toISOString().split('T')[0];
-
-      const totals = await database.getTotalsByType(startOfMonth, endOfMonth);
-      const transactions = await database.getTransactions(100);
-      const categories = await database.getTransactionsByCategory('expense');
-
-      setCurrentMonthSummary({
-        totalIncome: totals.income,
-        totalExpense: totals.expense,
-        balance: totals.income - totals.expense,
-        transactionCount: transactions.length
-      });
-
-      // Calculate percentages for top categories
-      const totalExpense = totals.expense;
-      const categoriesWithPercentage = categories.map(cat => ({
-        ...cat,
-        percentage: totalExpense > 0 ? (cat.total / totalExpense) * 100 : 0
-      })).slice(0, 3);
-
-      setTopCategories(categoriesWithPercentage);
-
-      // Get last 6 months data
-      const monthsData: MonthlyData[] = [];
-      for (let i = 5; i >= 0; i--) {
-        const monthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
-        const monthStart = monthDate.toISOString().split('T')[0];
-        const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0).toISOString().split('T')[0];
-        
-        const monthTotals = await database.getTotalsByType(monthStart, monthEnd);
-        monthsData.push({
-          month: monthDate.toLocaleDateString('vi-VN', { month: 'short' }),
-          income: monthTotals.income,
-          expense: monthTotals.expense,
-          balance: monthTotals.income - monthTotals.expense
-        });
-      }
-
-      setMonthlyData(monthsData);
-    } catch (error) {
-      console.error('Error loading finance data:', error);
-    } finally {
-      setLoading(false);
+  // Fetch Top 5 with SWR-like behavior
+  const fetchTopCategories = async (key: RangeKey, background = false) => {
+    const now = new Date();
+    const cacheKey = cacheKeyOf(key, now);
+    const cached = cacheRef.current.get(cacheKey);
+    if (!background) {
+      if (cached) setTopCategories(cached);
+      setLoadingTop(!cached);
+    }
+    const { start, end } = getRangeDates(key, now);
+    const categories = await database.getTransactionsByCategory('expense', start, end);
+    const { expense: totalExpenseRange } = await database.getTotalsByType(start, end);
+    const computed = categories.map(cat => ({ ...cat, percentage: totalExpenseRange > 0 ? (cat.total / totalExpenseRange) * 100 : 0 })).slice(0, 5);
+    cacheRef.current.set(cacheKey, computed);
+    if (!background && key === range) {
+      setTopCategories(computed);
+      setLoadingTop(false);
     }
   };
 
@@ -133,9 +169,9 @@ export default function FinanceScreen() {
           <Ionicons name="analytics" size={48} color="white" style={styles.headerIcon} />
           <ThemedText style={styles.headerTitle}>Báo Cáo Tài Chính</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
-            Tháng {new Date().toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })}
+           {new Date().toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })}
           </ThemedText>
-          <ThemedText style={styles.balanceText}>
+          <ThemedText style={styles.balanceText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
             {formatCurrency(currentMonthSummary.balance)}
           </ThemedText>
           <ThemedText style={styles.balanceLabel}>Số Dư Hiện Tại</ThemedText>
@@ -157,10 +193,15 @@ export default function FinanceScreen() {
       </ThemedView>
 
       {/* Top Categories */}
-      {topCategories.length > 0 && (
-        <ThemedView style={[styles.categoriesContainer, { backgroundColor: cardBg }]}> 
-          <ThemedText type="title" style={styles.sectionTitle}>Danh Mục Chi Tiêu Hàng Đầu</ThemedText>
-          {topCategories.map((category) => (
+      <ThemedView style={[styles.categoriesContainer, { backgroundColor: cardBg }]}> 
+        <ThemedText type="title" style={styles.sectionTitle}>Danh Mục Chi Tiêu Hàng Đầu</ThemedText>
+        <Pressable style={[styles.rangeSelector, { borderColor: tintColor + '60' }]} onPress={() => setShowRangeModal(true)}>
+          <ThemedText style={[styles.rangeSelectorText, { color: tintColor }]}>
+            {range === 'week' ? 'Tuần này' : range === 'thisMonth' ? 'Tháng này' : 'Tháng trước'}
+          </ThemedText>
+          <Ionicons name="chevron-down" size={18} color={tintColor} />
+        </Pressable>
+        {topCategories.length > 0 ? topCategories.map((category) => (
             <ThemedView key={category.category} style={styles.categoryItem}>
               <ThemedView style={styles.categoryInfo}>
                 <ThemedText style={styles.categoryName}>{category.category}</ThemedText>
@@ -168,7 +209,7 @@ export default function FinanceScreen() {
                   {formatCurrency(category.total)}
                 </ThemedText>
               </ThemedView>
-              <ThemedView style={[styles.categoryBar, { backgroundColor: dividerColor }]}>
+              <ThemedView style={[styles.categoryBar, { backgroundColor: dividerColor }]}> 
                 <ThemedView 
                   style={[
                     styles.categoryBarFill, 
@@ -183,9 +224,10 @@ export default function FinanceScreen() {
                 {category.percentage.toFixed(1)}%
               </ThemedText>
             </ThemedView>
-          ))}
-        </ThemedView>
-      )}
+          )) : (
+            <ThemedText style={{ opacity: 0.7 }}>Không có dữ liệu</ThemedText>
+          )}
+      </ThemedView>
 
       {/* Monthly Trends */}
       <ThemedView style={[styles.trendsContainer, { backgroundColor: cardBg }]}>
@@ -311,6 +353,33 @@ export default function FinanceScreen() {
         </ThemedView>
       </Modal>
 
+      {/* Range Picker Modal */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={showRangeModal}
+        onRequestClose={() => setShowRangeModal(false)}
+      >
+        <ThemedView style={styles.modalOverlay}>
+          <ThemedView style={[styles.modalContent, { backgroundColor }]}> 
+            <ThemedText style={styles.modalTitle}>Chọn phạm vi</ThemedText>
+            {([
+              { key: 'week', label: 'Tuần này' },
+              { key: 'thisMonth', label: 'Tháng này' },
+              { key: 'lastMonth', label: 'Tháng trước' },
+            ] as { key: 'week' | 'thisMonth' | 'lastMonth'; label: string }[]).map(opt => (
+              <Pressable
+                key={opt.key}
+                style={[styles.exportOption, range === opt.key ? { backgroundColor: tintColor + '15' } : null]}
+                onPress={() => { setRange(opt.key); setShowRangeModal(false); }}
+              >
+                <ThemedText style={styles.exportOptionText}>{opt.label}</ThemedText>
+              </Pressable>
+            ))}
+          </ThemedView>
+        </ThemedView>
+      </Modal>
+
       <ThemedView style={styles.bottomSpacer} />
     </ScrollView>
   );
@@ -329,10 +398,11 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   financeHeader: {
-    height: 220,
+    height: 260,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingTop: 60,
+    paddingTop: 70,
+    paddingBottom: 20,
   },
   headerContent: {
     backgroundColor: 'transparent',
@@ -357,6 +427,8 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: 'white',
     marginBottom: 5,
+    lineHeight: 40,
+    textAlign: 'center',
   },
   balanceLabel: {
     fontSize: 14,
@@ -365,7 +437,7 @@ const styles = StyleSheet.create({
   summaryContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: -30,
+    marginTop: 16,
     marginHorizontal: 20,
     backgroundColor: 'transparent',
   },
@@ -408,6 +480,23 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
     shadowRadius: 2,
+  },
+  rangeSelector: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 6,
+    marginBottom: 12,
+    backgroundColor: 'transparent',
+  },
+  rangeSelectorText: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginRight: 6,
   },
   categoryItem: {
     flexDirection: 'row',

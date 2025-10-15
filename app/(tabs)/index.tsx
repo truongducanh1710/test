@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ScrollView, StyleSheet, Pressable, Dimensions, StatusBar, RefreshControl, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -8,10 +8,16 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { CompactTransactionCard } from '@/components/TransactionCard';
 import { useThemeColor } from '@/hooks/use-theme-color';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { database, formatCurrency } from '@/lib/database';
 import { Transaction, TransactionSummary, CategorySummary } from '@/types/transaction';
 
 const { width } = Dimensions.get('window');
+
+// Module-level caches
+let homeSummaryCache: TransactionSummary | null = null;
+let homeRecentCache: Transaction[] | null = null;
+let homeTopCache: CategorySummary[] | null = null;
 
 export default function HomeScreen() {
   const [summary, setSummary] = useState<TransactionSummary>({
@@ -29,17 +35,25 @@ export default function HomeScreen() {
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
   const recentListBgColor = useThemeColor({ light: '#ffffff', dark: '#1f1f1f' }, 'background');
+  const colorScheme = useColorScheme();
+  const cameraButtonBg = colorScheme === 'dark' ? '#6366f1' : tintColor;
 
   // Load data when screen focuses
   useFocusEffect(
     useCallback(() => {
-      loadDashboardData();
+      // Hydrate from caches (no full-screen loading)
+      if (homeSummaryCache) setSummary(homeSummaryCache);
+      if (homeRecentCache) setRecentTransactions(homeRecentCache);
+      if (homeTopCache) setTopCategories(homeTopCache);
+      setLoading(!(homeSummaryCache && homeRecentCache && homeTopCache));
+      // Refresh in background
+      loadDashboardData(true);
     }, [])
   );
 
-  const loadDashboardData = async () => {
+  const loadDashboardData = async (background = false) => {
     try {
-      setLoading(true);
+      if (!background) setLoading(true);
       await database.init();
 
       // Get summary for current month
@@ -58,14 +72,20 @@ export default function HomeScreen() {
         percentage: totalExpense > 0 ? (cat.total / totalExpense) * 100 : 0
       })).slice(0, 5); // Top 5 categories
 
-      setSummary({
+      const nextSummary = {
         totalIncome: totals.income,
         totalExpense: totals.expense,
         balance: totals.income - totals.expense,
         transactionCount: transactions.length
-      });
+      };
+
+      setSummary(nextSummary);
       setRecentTransactions(transactions);
       setTopCategories(categoriesWithPercentage);
+      // Update caches
+      homeSummaryCache = nextSummary;
+      homeRecentCache = transactions;
+      homeTopCache = categoriesWithPercentage;
 
     } catch (error) {
       console.error('Error loading dashboard data:', error);
@@ -77,7 +97,7 @@ export default function HomeScreen() {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    loadDashboardData();
+    loadDashboardData(true);
   }, []);
 
   if (loading) {
@@ -106,7 +126,7 @@ export default function HomeScreen() {
       >
         <ThemedView style={styles.headerContent}>
           <ThemedText style={styles.welcomeText}>Số Dư Hiện Tại</ThemedText>
-          <ThemedText style={styles.balanceText} numberOfLines={1} adjustsFontSizeToFit>
+          <ThemedText style={styles.balanceText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
             {formatCurrency(summary.balance)}
           </ThemedText>
           <ThemedText style={styles.subHeaderText}>
@@ -135,7 +155,7 @@ export default function HomeScreen() {
             <ThemedText style={styles.summaryLabel}>Chi Tiêu</ThemedText>
             <ThemedText style={[styles.summaryAmount, { color: '#ef4444' }]}>
               {formatCurrency(summary.totalExpense)}
-        </ThemedText>
+            </ThemedText>
           </ThemedView>
         </ThemedView>
       </ThemedView>
@@ -146,7 +166,7 @@ export default function HomeScreen() {
         
         <ThemedView style={styles.quickActionsRow}>
           <Pressable 
-            style={[styles.quickActionButton, { backgroundColor: tintColor, borderColor: tintColor }]}
+            style={[styles.quickActionButton, { backgroundColor: cameraButtonBg, borderColor: cameraButtonBg }]}
             onPress={() => router.push('/camera')}
           >
             <Ionicons name="camera" size={24} color="white" />
@@ -203,8 +223,8 @@ export default function HomeScreen() {
               </ThemedView>
               <ThemedText style={styles.categoryPercentage}>
                 {category.percentage.toFixed(1)}%
-        </ThemedText>
-      </ThemedView>
+              </ThemedText>
+            </ThemedView>
           ))}
         </ThemedView>
       )}
@@ -285,6 +305,7 @@ const styles = StyleSheet.create({
     color: 'white',
     textAlign: 'center',
     marginBottom: 8,
+    lineHeight: 44,
   },
   subHeaderText: {
     fontSize: 14,
