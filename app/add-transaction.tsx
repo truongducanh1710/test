@@ -43,6 +43,7 @@ export default function AddTransactionScreen() {
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
   const primaryColor = useThemeColor({ light: '#2563eb', dark: '#6366f1' }, 'tint');
+  const chipBg = useThemeColor({ light: '#f5f5f5', dark: '#2a2a2a' }, 'background');
   const textColor = useThemeColor({}, 'text');
 
   // Load transaction for editing if ID is provided
@@ -226,7 +227,7 @@ export default function AddTransactionScreen() {
         {/* Transaction Type Toggle */}
         <ThemedView style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Loại Giao Dịch</ThemedText>
-          <ThemedView style={styles.typeToggle}>
+          <ThemedView style={[styles.typeToggle, { borderColor: tintColor + '30', backgroundColor: chipBg }]}>
             <Pressable 
               style={[
                 styles.typeButton, 
@@ -504,9 +505,9 @@ const styles = StyleSheet.create({
   },
   typeToggle: {
     flexDirection: 'row',
-    backgroundColor: '#f5f5f5',
     borderRadius: 12,
     padding: 4,
+    borderWidth: 1,
   },
   typeButton: {
     flex: 1,
