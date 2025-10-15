@@ -6,7 +6,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { database, formatCurrency, type Budget } from '@/lib/database';
+import { database, formatCurrency, type Budget, databaseEvents } from '@/lib/database';
 import { ensureNotificationPermissions, notifyBudgetThreshold, setupAndroidChannels, scheduleDailyDigest } from '@/lib/notifications';
 import { TransactionSummary, CategorySummary } from '@/types/transaction';
 
@@ -46,6 +46,7 @@ export default function FinanceScreen() {
   const [budgetLoading, setBudgetLoading] = useState(false);
   const [budget, setBudget] = useState<Budget | null>(null);
   const [walletProgress, setWalletProgress] = useState<{ id: string; name: string; color?: string | null; spend: number; limit: number; usedPct: number }[]>([]);
+  const [incomeThisMonth, setIncomeThisMonth] = useState<number>(0);
   
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
@@ -119,7 +120,10 @@ export default function FinanceScreen() {
           fetchTopCategories('week', true);
           fetchTopCategories('lastMonth', true);
 
-          // Load budget & wallets progress
+          // Ensure default mapping exists then load budget & wallets progress
+          if (financeBudgetCache?.budget?.id) {
+            try { await database.seedDefaultCategoryWalletsIfEmpty(financeBudgetCache.budget.id!); } catch {}
+          }
           await loadBudgetAndWallets(range);
           // schedule digest once (idempotent-ish; harmless if repeats)
           scheduleDailyDigest(9).catch(() => {});
@@ -127,6 +131,18 @@ export default function FinanceScreen() {
           setLoading(false);
         }
       })();
+
+      // Live refresh when transactions or mappings change
+      const onChange = () => {
+        fetchTopCategories(range, true);
+        loadBudgetAndWallets(range);
+      };
+      databaseEvents.on('transactions_changed', onChange);
+      databaseEvents.on('category_budgets_changed', onChange);
+      return () => {
+        databaseEvents.off('transactions_changed', onChange);
+        databaseEvents.off('category_budgets_changed', onChange);
+      };
     }, [range])
   );
 
@@ -162,22 +178,20 @@ export default function FinanceScreen() {
     }
     const now = new Date();
     const { start, end } = getRangeDates(key, now);
-    const [wallets, catBudgets, spendByWallet] = await Promise.all([
-      database.listWallets(b.id!),
-      database.listCategoryBudgets(b.id!),
+    const [computedBudgets, spendByWallet, totals] = await Promise.all([
+      database.computeWalletBudgets(b.id!, start, end),
       database.getSpendByWalletRange(b.id!, start, end),
+      database.getTotalsByType(start, end),
     ]);
-    const scale = key === 'week' ? 7 / 30 : 1;
-    const computed = wallets.map(w => {
-      const limitFromCats = catBudgets.filter(cb => cb.wallet_id === w.id).reduce((s, cb) => s + Number(cb.limit_amount || 0), 0);
-      const fallback = b.monthly_income && w.percent != null ? (Number(b.monthly_income) * (Number(w.percent) / 100)) : 0;
-      const limit = (limitFromCats > 0 ? limitFromCats : fallback) * scale;
-      const spend = spendByWallet.get(w.id!) || 0;
-      const usedPct = limit > 0 ? (spend / limit) * 100 : 0;
-      return { id: w.id!, name: w.name, color: w.color, spend, limit, usedPct };
+    const income = Number(totals.income || 0);
+    const computed = computedBudgets.map(w => {
+      const spend = spendByWallet.get(w.id) || 0;
+      const usedPct = w.limit > 0 ? (spend / w.limit) * 100 : 0;
+      return { id: w.id, name: w.name, color: w.color, spend, limit: w.limit, usedPct };
     });
     setBudget(b);
     setWalletProgress(computed);
+    setIncomeThisMonth(income);
     financeBudgetCache = { budget: b, wallets: computed };
     setBudgetLoading(false);
 
@@ -256,6 +270,8 @@ export default function FinanceScreen() {
       {/* Budget Card (moved below summary) */}
       <ThemedView style={[styles.categoriesContainer, { backgroundColor: cardBg }]}> 
         <ThemedText type="title" style={styles.sectionTitle}>Ngân Sách</ThemedText>
+        <ThemedText style={{ opacity: 0.8, marginBottom: 8 }}>Thu nhập tháng này: {formatCurrency(incomeThisMonth)}</ThemedText>
+        <ThemedText style={{ opacity: 0.6, marginBottom: 12 }}>Ngân sách = % × Thu nhập tháng này</ThemedText>
         {!budget ? (
           <Pressable style={[styles.rangeSelector, { borderColor: tintColor + '60' }]} onPress={handleBudgetManagement}>
             <ThemedText style={[styles.rangeSelectorText, { color: tintColor }]}>Thiết lập ngân sách</ThemedText>
@@ -279,14 +295,14 @@ export default function FinanceScreen() {
                     />
                   </ThemedView>
                   <ThemedText style={styles.categoryPercentage}>{w.usedPct.toFixed(0)}%</ThemedText>
-                </ThemedView>
+          </ThemedView>
               </Pressable>
             );
           })
         ) : (
           <ThemedText style={{ opacity: 0.7 }}>{budgetLoading ? 'Đang tải...' : 'Không có dữ liệu'}</ThemedText>
         )}
-      </ThemedView>
+          </ThemedView>
 
       {/* Top Categories */}
       <ThemedView style={[styles.categoriesContainer, { backgroundColor: cardBg }]}> 

@@ -1,5 +1,21 @@
 import * as SQLite from 'expo-sqlite';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+// Simple event emitter to notify UI of database changes
+type DbEvent = 'transactions_changed' | 'category_budgets_changed';
+class DbEventEmitter {
+  private listeners = new Map<DbEvent, Set<(...args: any[]) => void>>();
+  on(event: DbEvent, cb: (...args: any[]) => void) {
+    if (!this.listeners.has(event)) this.listeners.set(event, new Set());
+    this.listeners.get(event)!.add(cb);
+  }
+  off(event: DbEvent, cb: (...args: any[]) => void) {
+    this.listeners.get(event)?.delete(cb);
+  }
+  emit(event: DbEvent, ...args: any[]) {
+    this.listeners.get(event)?.forEach(cb => cb(...args));
+  }
+}
+export const databaseEvents = new DbEventEmitter();
 
 export interface Transaction {
   id?: string; // uuid on Supabase; numeric only for legacy SQLite
@@ -163,19 +179,19 @@ class DatabaseManager {
     if (!this.db) throw new DatabaseException('DB_NOT_INITIALIZED', 'Cơ sở dữ liệu chưa được khởi tạo');
 
     try {
-      const createTransactionsTable = `
-        CREATE TABLE IF NOT EXISTS transactions (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
+    const createTransactionsTable = `
+      CREATE TABLE IF NOT EXISTS transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
           amount REAL NOT NULL CHECK (amount > 0),
           description TEXT NOT NULL CHECK (length(trim(description)) > 0),
           category TEXT NOT NULL CHECK (length(trim(category)) > 0),
           date TEXT NOT NULL CHECK (date(date) IS NOT NULL),
-          type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
-          source TEXT NOT NULL CHECK (source IN ('manual', 'ai')),
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-          updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-      `;
+        type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
+        source TEXT NOT NULL CHECK (source IN ('manual', 'ai')),
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
 
       const createIndexes = [
         'CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date DESC)',
@@ -184,7 +200,7 @@ class DatabaseManager {
         'CREATE INDEX IF NOT EXISTS idx_transactions_source ON transactions(source)'
       ];
 
-      await this.db.execAsync(createTransactionsTable);
+    await this.db.execAsync(createTransactionsTable);
       
       for (const indexQuery of createIndexes) {
         await this.db.execAsync(indexQuery);
@@ -237,6 +253,7 @@ class DatabaseManager {
       .select('id')
       .single();
     if (error) throw new DatabaseException('UPSERT_ERROR', error.message as any);
+    databaseEvents.emit('category_budgets_changed');
     return data!.id as string;
   }
 
@@ -251,7 +268,18 @@ class DatabaseManager {
   async upsertWallets(wallets: Wallet[]): Promise<void> {
     await this.ensureInitialized();
     this.assertSupabase();
-    const { error } = await this.sb!.from('wallets').upsert(wallets as any);
+    // Remove id for new rows so Postgres default (gen_random_uuid) applies
+    const payload = wallets.map((w) => {
+      const base: any = {
+        budget_id: w.budget_id,
+        name: w.name,
+        percent: w.percent ?? null,
+        color: w.color ?? null,
+      };
+      if (w.id) base.id = w.id; // only include when updating existing
+      return base;
+    });
+    const { error } = await this.sb!.from('wallets').upsert(payload, { onConflict: 'id' } as any);
     if (error) throw new DatabaseException('UPSERT_ERROR', error.message as any);
   }
 
@@ -268,6 +296,44 @@ class DatabaseManager {
     this.assertSupabase();
     const { error } = await this.sb!.from('category_budgets').upsert(items as any);
     if (error) throw new DatabaseException('UPSERT_ERROR', error.message as any);
+  }
+
+  // Seed default category -> wallet mapping if none exists for this budget
+  async seedDefaultCategoryWalletsIfEmpty(budgetId: string): Promise<boolean> {
+    await this.ensureInitialized();
+    this.assertSupabase();
+    const { count, error } = await this.sb!
+      .from('category_budgets')
+      .select('id', { count: 'exact', head: true })
+      .eq('budget_id', budgetId);
+    if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+    if ((count || 0) > 0) return false;
+
+    const wallets = await this.listWallets(budgetId);
+    const nameToId = new Map<string, string>();
+    wallets.forEach(w => nameToId.set(w.name.toLowerCase(), w.id!));
+
+    // Defaults (vi-VN):
+    const essentials = ['Ăn uống','Di chuyển','Xăng xe','Nhà ở','Tiền điện','Tiền nước','Internet','Điện thoại','Y tế','Khác'];
+    const lifestyle = ['Mua sắm','Giải trí'];
+    const education = ['Học tập'];
+    const savings = ['Bảo hiểm'];
+
+    const items: CategoryBudget[] = [];
+    const pushFor = (cats: string[], walletName: string) => {
+      const wid = nameToId.get(walletName.toLowerCase());
+      cats.forEach(category => items.push({ budget_id: budgetId, category, wallet_id: wid || null, limit_amount: 0 }));
+    };
+
+    pushFor(essentials, 'Essentials');
+    pushFor(lifestyle, 'Lifestyle');
+    pushFor(education, 'Education');
+    pushFor(savings, 'Savings');
+
+    const { error: insertError } = await this.sb!.from('category_budgets').insert(items as any);
+    if (insertError) throw new DatabaseException('INSERT_ERROR', insertError.message as any);
+    databaseEvents.emit('category_budgets_changed');
+    return true;
   }
 
   async getSpendByCategoryRange(start: string, end: string): Promise<Map<string, number>> {
@@ -291,6 +357,29 @@ class DatabaseManager {
     return walletToSpend;
   }
 
+  // Compute wallet limits from actual income in range based on wallet percent
+  async computeWalletBudgets(
+    budgetId: string,
+    start: string,
+    end: string
+  ): Promise<Array<{ id: string; name: string; percent: number; color?: string | null; limit: number }>> {
+    await this.ensureInitialized();
+    this.assertSupabase();
+
+    const [wallets, totals] = await Promise.all([
+      this.listWallets(budgetId),
+      this.getTotalsByType(start, end),
+    ]);
+    const income = Number(totals.income || 0);
+    return wallets.map(w => ({
+      id: w.id!,
+      name: w.name,
+      percent: Number(w.percent || 0),
+      color: w.color,
+      limit: income * (Number(w.percent || 0) / 100),
+    }));
+  }
+
   // ----- Existing transactions APIs below -----
   // CRUD Operations
   async addTransaction(transaction: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>): Promise<string> {
@@ -303,7 +392,7 @@ class DatabaseManager {
     }
 
     try {
-      const { amount, description, category, date, type, source } = transaction;
+    const { amount, description, category, date, type, source } = transaction;
       // Supabase-first
       if (this.sb) {
         const { data, error } = await this.sb
@@ -312,12 +401,14 @@ class DatabaseManager {
           .select('id')
           .single();
         if (error) throw new DatabaseException('INSERT_FAILED', error.message as any);
-        return data!.id as string;
+        const newId = data!.id as string;
+        databaseEvents.emit('transactions_changed');
+        return newId;
       }
 
       const result = await this.db!.runAsync(
-        `INSERT INTO transactions (amount, description, category, date, type, source) 
-         VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO transactions (amount, description, category, date, type, source) 
+       VALUES (?, ?, ?, ?, ?, ?)`,
         [amount, description.trim(), category.trim(), date, type, source]
       );
 
@@ -325,7 +416,9 @@ class DatabaseManager {
         throw new DatabaseException('INSERT_FAILED', 'Không thể thêm giao dịch');
       }
 
-      return String(result.lastInsertRowId);
+      const newId = String(result.lastInsertRowId);
+      databaseEvents.emit('transactions_changed');
+      return newId;
     } catch (error) {
       if (error instanceof DatabaseException) {
         throw error;
@@ -364,18 +457,18 @@ class DatabaseManager {
         throw new DatabaseException('INVALID_OFFSET', 'Offset phải là số nguyên không âm');
       }
 
-      let query = `SELECT * FROM transactions ORDER BY date DESC, created_at DESC`;
-      const params: any[] = [];
+    let query = `SELECT * FROM transactions ORDER BY date DESC, created_at DESC`;
+    const params: any[] = [];
 
-      if (limit) {
-        query += ` LIMIT ?`;
-        params.push(limit);
-        
-        if (offset) {
-          query += ` OFFSET ?`;
-          params.push(offset);
-        }
+    if (limit) {
+      query += ` LIMIT ?`;
+      params.push(limit);
+      
+      if (offset) {
+        query += ` OFFSET ?`;
+        params.push(offset);
       }
+    }
 
       const result = await this.db!.getAllAsync(query, params);
       // Map numeric id to string for consistency
@@ -408,7 +501,7 @@ class DatabaseManager {
         throw new DatabaseException('INVALID_ID', 'ID giao dịch không hợp lệ');
       }
       const result = await this.db!.getFirstAsync(
-        `SELECT * FROM transactions WHERE id = ?`,
+      `SELECT * FROM transactions WHERE id = ?`,
         [numericId]
       );
       if (!result) return null;
@@ -432,28 +525,30 @@ class DatabaseManager {
         delete safeUpdates.created_at;
         const { error } = await this.sb.from('transactions').update(safeUpdates).eq('id', id);
         if (error) throw new DatabaseException('UPDATE_ERROR', error.message as any);
+        databaseEvents.emit('transactions_changed');
         return;
       }
 
-      const setClause = Object.keys(updates)
-        .filter(key => key !== 'id' && key !== 'created_at')
-        .map(key => `${key} = ?`)
-        .join(', ');
+    const setClause = Object.keys(updates)
+      .filter(key => key !== 'id' && key !== 'created_at')
+      .map(key => `${key} = ?`)
+      .join(', ');
 
-      if (!setClause) return;
+    if (!setClause) return;
 
-      const values = Object.entries(updates)
-        .filter(([key]) => key !== 'id' && key !== 'created_at')
-        .map(([, value]) => value);
+    const values = Object.entries(updates)
+      .filter(([key]) => key !== 'id' && key !== 'created_at')
+      .map(([, value]) => value);
 
       const result = await this.db!.runAsync(
-        `UPDATE transactions SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      `UPDATE transactions SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [...values, Number(id)]
       );
 
       if (result.changes === 0) {
         throw new DatabaseException('TRANSACTION_NOT_FOUND', 'Không tìm thấy giao dịch để cập nhật');
       }
+      databaseEvents.emit('transactions_changed');
     } catch (error) {
       if (error instanceof DatabaseException) {
         throw error;
@@ -469,6 +564,7 @@ class DatabaseManager {
       if (this.sb) {
         const { error } = await this.sb.from('transactions').delete().eq('id', id);
         if (error) throw new DatabaseException('DELETE_ERROR', error.message as any);
+        databaseEvents.emit('transactions_changed');
         return;
       }
       const numericId = Number(id);
@@ -479,6 +575,7 @@ class DatabaseManager {
       if (result.changes === 0) {
         throw new DatabaseException('TRANSACTION_NOT_FOUND', 'Không tìm thấy giao dịch để xóa');
       }
+      databaseEvents.emit('transactions_changed');
     } catch (error) {
       if (error instanceof DatabaseException) {
         throw error;
@@ -619,6 +716,7 @@ class DatabaseManager {
       }));
       const { data, error } = await this.sb.from('transactions').insert(payload).select('id');
       if (error) throw new DatabaseException('BATCH_INSERT_ERROR', error.message as any);
+      databaseEvents.emit('transactions_changed');
       return (data || []).map(r => r.id as string);
     }
 
@@ -635,6 +733,7 @@ class DatabaseManager {
         ids.push(String(result.lastInsertRowId));
       }
     });
+    databaseEvents.emit('transactions_changed');
     return ids;
   }
 

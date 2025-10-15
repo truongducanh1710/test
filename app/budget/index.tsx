@@ -97,13 +97,16 @@ export default function BudgetSetupScreen() {
       } as any;
       const id = await database.upsertBudget(payload);
       setBudgetId(id);
-      const upsertWallets = wallets.map(w => ({
-        id: w.id,
-        budget_id: id,
-        name: w.name,
-        percent: w.percent ?? null,
-        color: w.color ?? null,
-      }));
+      const upsertWallets = wallets.map(w => {
+        const base: any = {
+          budget_id: id,
+          name: w.name,
+          percent: w.percent ?? null,
+          color: w.color ?? null,
+        };
+        if (w.id) base.id = w.id; // only keep id for existing rows
+        return base;
+      });
       await database.upsertWallets(upsertWallets);
       Alert.alert('Thành công', 'Đã lưu thiết lập ngân sách');
       router.back();
@@ -147,16 +150,7 @@ export default function BudgetSetupScreen() {
           <Switch value={rollover} onValueChange={setRollover} thumbColor={rollover ? tintColor : undefined} />
         </View>
 
-        <ThemedText style={[styles.sectionLabel, { marginTop: 16 }]}>Thu nhập tháng (tùy chọn)</ThemedText>
-        <TextInput
-          value={monthlyIncome}
-          onChangeText={setMonthlyIncome}
-          placeholder="VD: 20000000"
-          keyboardType="numeric"
-          selectionColor={tintColor}
-          style={[styles.input, { borderColor: tintColor + '60', backgroundColor: chipBg, color: textColor }]}
-          placeholderTextColor={'#9ca3af'}
-        />
+        <ThemedText style={{ opacity: 0.7 }}>Hạn mức 4 ví sẽ tự tính theo % × Thu nhập tháng này</ThemedText>
       </ThemedView>
 
       <ThemedView style={[styles.card, { backgroundColor: cardBg }]}> 
