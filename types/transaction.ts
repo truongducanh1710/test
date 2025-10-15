@@ -100,6 +100,9 @@ export const EXPENSE_CATEGORIES = [
   'Điện thoại',
   'Nhà ở',
   'Bảo hiểm',
+  'Bạn bè hiếu hỉ',
+  'Tín dụng',
+  'Cho vay',
   'Khác'
 ] as const;
 
@@ -110,6 +113,7 @@ export const INCOME_CATEGORIES = [
   'Bán hàng',
   'Đầu tư',
   'Quà tặng',
+  'Vay',
   'Khác'
 ] as const;
 
@@ -180,14 +184,17 @@ export const getCategoryIcon = (category: string): string => {
     'Điện thoại': '📱',
     'Nhà ở': '🏠',
     'Bảo hiểm': '🛡️',
-    'Lương': '💰',
-    'Thưởng': '🎁',
-    'Làm thêm': '💼',
-    'Bán hàng': '🛒',
-    'Đầu tư': '📈',
-    'Quà tặng': '🎀',
-    'Khác': '📋'
-  };
+  'Bạn bè hiếu hỉ': '🤝',
+  'Tín dụng': '💳',
+  'Cho vay': '📤',
+  'Lương': '💰',
+  'Thưởng': '🎁',
+  'Làm thêm': '💼',
+  'Bán hàng': '🛒',
+  'Đầu tư': '📈',
+  'Vay': '📥',
+  'Khác': '📋'
+};
   
   return iconMap[category] || '📋';
 };

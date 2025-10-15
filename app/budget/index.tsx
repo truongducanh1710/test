@@ -21,6 +21,7 @@ export default function BudgetSetupScreen() {
   const router = useRouter();
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
+  const primaryColor = useThemeColor({ light: '#2563eb', dark: '#6366f1' }, 'tint');
   const cardBg = useThemeColor({ light: '#ffffff', dark: '#1f1f1f' }, 'background');
   const chipBg = useThemeColor({ light: '#f3f4f6', dark: '#2a2a2a' }, 'background');
   const textColor = useThemeColor({}, 'text');
@@ -55,7 +56,7 @@ export default function BudgetSetupScreen() {
         } else {
           setWallets(DEFAULT_WALLETS.map(w => ({ id: undefined, budget_id: existing.id!, name: w.name, percent: w.percent, color: w.color })));
         }
-        // load mapping
+        // load mapping (use wallet id)
         const map = await database.getWalletCategoriesMap(existing.id!);
         const reverse: Record<string, string | null> = {};
         EXPENSE_CATEGORIES.forEach(cat => {
@@ -122,16 +123,26 @@ export default function BudgetSetupScreen() {
         return base;
       });
       await database.upsertWallets(upsertWallets);
-      // save mapping
+      // save mapping - resolve wallet_id by name if needed
       const walletIdByName = new Map<string, string>();
       const currentWallets = await database.listWallets(id);
       currentWallets.forEach(w => walletIdByName.set(w.name, w.id!));
-      const items = Object.entries(categoryWallet).map(([category, wid]) => ({
-        budget_id: id,
-        category,
-        wallet_id: wid || null,
-        limit_amount: 0,
-      }));
+      
+      const items = Object.entries(categoryWallet).map(([category, keyOrId]) => {
+        let finalWalletId: string | null = null;
+        if (keyOrId) {
+          // Check if keyOrId is a wallet name (for new wallets) or actual id
+          const matchByName = currentWallets.find(w => w.name === keyOrId);
+          const matchById = currentWallets.find(w => w.id === keyOrId);
+          finalWalletId = matchById ? matchById.id! : (matchByName ? matchByName.id! : null);
+        }
+        return {
+          budget_id: id,
+          category,
+          wallet_id: finalWalletId,
+          limit_amount: 0,
+        };
+      });
       await database.upsertCategoryBudgets(items as any);
       Alert.alert('Thành công', 'Đã lưu thiết lập ngân sách');
       router.back();
@@ -201,21 +212,81 @@ export default function BudgetSetupScreen() {
 
       <ThemedView style={[styles.card, { backgroundColor: cardBg }]}> 
         <ThemedText style={styles.sectionLabel}>Gán danh mục vào ví</ThemedText>
-        {EXPENSE_CATEGORIES.map((cat) => (
-          <View key={cat} style={styles.mapRow}>
-            <ThemedText style={styles.mapCat}>{cat}</ThemedText>
-            <View style={styles.mapActions}>
-              {wallets.map(w => (
-                <Pressable key={w.id || w.name} style={[styles.mapChip, (categoryWallet[cat] === w.id) ? { borderColor: tintColor } : null]} onPress={() => setCategoryWallet(prev => ({ ...prev, [cat]: w.id || null }))}>
-                  <ThemedText style={[styles.mapChipText, { color: (categoryWallet[cat] === w.id) ? tintColor : textColor }]}>{vnNameOf(w.name)}</ThemedText>
-                </Pressable>
-              ))}
-            </View>
+        <ThemedText style={{ fontSize: 12, opacity: 0.6, marginBottom: 12 }}>Nhấn giữ chip để di chuyển giữa các ví</ThemedText>
+        
+        {/* 4 Wallets as columns */}
+        <View style={styles.walletsGrid}>
+          {wallets.map((w, idx) => {
+            const walletKey = w.id || w.name;
+            const assignedCats = EXPENSE_CATEGORIES.filter(cat => categoryWallet[cat] === walletKey);
+            return (
+              <View key={walletKey} style={[styles.walletColumn, { borderColor: w.color || '#888' }]}>
+                <View style={[styles.walletColumnHeader, { backgroundColor: w.color || '#888' }]}>
+                  <ThemedText style={styles.walletColumnTitle}>{vnNameOf(w.name)}</ThemedText>
+                  <ThemedText style={styles.walletColumnCount}>({assignedCats.length})</ThemedText>
+                </View>
+                <View style={styles.walletColumnBody}>
+                  {assignedCats.length > 0 ? (
+                    assignedCats.map(cat => (
+                      <Pressable
+                        key={cat}
+                        style={[styles.categoryChipDraggable, { backgroundColor: tintColor + '15', borderColor: tintColor + '40' }]}
+                        onLongPress={() => {
+                          Alert.alert(
+                            `Di chuyển "${cat}"`,
+                            'Chọn ví đích:',
+                            wallets.map((targetWallet, tIdx) => ({
+                              text: vnNameOf(targetWallet.name),
+                              onPress: () => {
+                                const targetKey = targetWallet.id || targetWallet.name;
+                                setCategoryWallet(prev => ({ ...prev, [cat]: targetKey }));
+                              },
+                            })).concat([{ text: 'Hủy', style: 'cancel' }])
+                          );
+                        }}
+                      >
+                        <ThemedText style={[styles.categoryChipDraggableText, { color: tintColor }]}>{cat}</ThemedText>
+                      </Pressable>
+                    ))
+                  ) : (
+                    <ThemedText style={{ fontSize: 11, opacity: 0.5, textAlign: 'center', marginTop: 8 }}>Trống</ThemedText>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+
+        {/* Unassigned categories */}
+        <View style={styles.unassignedSection}>
+          <ThemedText style={[styles.sectionLabel, { marginTop: 16 }]}>Chưa gán</ThemedText>
+          <View style={styles.unassignedChips}>
+            {EXPENSE_CATEGORIES.filter(cat => !categoryWallet[cat]).map(cat => (
+              <Pressable
+                key={cat}
+                style={[styles.categoryChipDraggable, { backgroundColor: chipBg, borderColor: textColor + '30' }]}
+                onLongPress={() => {
+                  Alert.alert(
+                    `Gán "${cat}"`,
+                    'Chọn ví:',
+                    wallets.map((targetWallet, tIdx) => ({
+                      text: vnNameOf(targetWallet.name),
+                      onPress: () => {
+                        const targetKey = targetWallet.id || targetWallet.name;
+                        setCategoryWallet(prev => ({ ...prev, [cat]: targetKey }));
+                      },
+                    })).concat([{ text: 'Hủy', style: 'cancel' }])
+                  );
+                }}
+              >
+                <ThemedText style={[styles.categoryChipDraggableText, { color: textColor }]}>{cat}</ThemedText>
+              </Pressable>
+            ))}
           </View>
-        ))}
+        </View>
       </ThemedView>
 
-      <Pressable style={[styles.saveBtn, { backgroundColor: tintColor }]} onPress={handleSave} disabled={loading}>
+      <Pressable style={[styles.saveBtn, { backgroundColor: primaryColor }]} onPress={handleSave} disabled={loading}>
         <Ionicons name="save-outline" size={18} color="#fff" />
         <ThemedText style={styles.saveText}>Lưu</ThemedText>
       </Pressable>
@@ -316,29 +387,60 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontSize: 16,
   },
-  mapRow: {
+  walletsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
     marginTop: 10,
   },
-  mapCat: {
-    fontSize: 14,
-    fontWeight: '600',
+  walletColumn: {
+    width: '48%',
+    borderWidth: 2,
+    borderRadius: 12,
+    padding: 8,
+    marginBottom: 10,
+  },
+  walletColumnHeader: {
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 8,
   },
-  mapActions: {
+  walletColumnTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  walletColumnCount: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#fff',
+    opacity: 0.9,
+  },
+  walletColumnBody: {
+    minHeight: 40,
+  },
+  categoryChipDraggable: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    marginBottom: 5,
+    alignItems: 'center',
+  },
+  categoryChipDraggableText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  unassignedSection: {
+    marginTop: 16,
+  },
+  unassignedChips: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8 as any,
-  },
-  mapChip: {
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  mapChipText: {
-    fontSize: 12,
-    fontWeight: '600',
   },
 });
