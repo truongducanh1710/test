@@ -25,6 +25,10 @@ export interface Transaction {
   date: string;
   type: 'income' | 'expense';
   source: 'manual' | 'ai'; // Để biết giao dịch được thêm thủ công hay AI
+  // Family/Privacy (Supabase-first; optional in SQLite fallback)
+  household_id?: string | null;
+  owner_user_id?: string | null;
+  is_private?: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -493,12 +497,12 @@ class DatabaseManager {
     }
 
     try {
-    const { amount, description, category, date, type, source } = transaction;
+    const { amount, description, category, date, type, source, is_private, household_id, owner_user_id } = transaction;
       // Supabase-first
       if (this.sb) {
         const { data, error } = await this.sb
           .from('transactions')
-          .insert({ amount, description: description.trim(), category: category.trim(), date, type, source })
+          .insert({ amount, description: description.trim(), category: category.trim(), date, type, source, is_private: !!is_private, household_id: household_id || null, owner_user_id: owner_user_id || null })
           .select('id')
           .single();
         if (error) throw new DatabaseException('INSERT_FAILED', error.message as any);

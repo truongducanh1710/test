@@ -3,17 +3,19 @@ import { StyleSheet, View, Pressable } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { getHabitSettings, setHabitSettings, HabitSettings } from '@/lib/settings';
+import { getHabitSettings, setHabitSettings, HabitSettings, getPrivacySettings, setPrivacySettings, PrivacySettings } from '@/lib/settings';
 import { ensureNotificationPermissions, scheduleDailyHabitReminder } from '@/lib/notifications';
 
 export default function SettingsScreen() {
   const tint = useThemeColor({}, 'tint');
   const [settings, setSettings] = useState<HabitSettings>({ enabled: true, hour: 20 });
   const [loading, setLoading] = useState(true);
+  const [privacy, setPrivacy] = useState<PrivacySettings>({ privateMode: false });
 
   useEffect(() => {
     (async () => {
       setSettings(await getHabitSettings());
+      setPrivacy(await getPrivacySettings());
       setLoading(false);
     })();
   }, []);
@@ -54,6 +56,21 @@ export default function SettingsScreen() {
         </Pressable>
       </View>
       <ThemedText style={{ opacity: 0.7, marginTop: 8 }}>Thông báo lặp lại mỗi ngày vào giờ đã chọn.</ThemedText>
+
+      <ThemedText type="title" style={[styles.title, { marginTop: 24 }]}>Quyền riêng tư</ThemedText>
+      <ThemedText style={{ marginBottom: 8 }}>Chế độ riêng tư (giao dịch mới của bạn mặc định ẩn chi tiết với người khác)</ThemedText>
+      <View style={styles.row}>
+        <Pressable
+          style={[styles.toggle, { backgroundColor: privacy.privateMode ? tint : '#ccc' }]}
+          onPress={async () => {
+            const next = { privateMode: !privacy.privateMode };
+            setPrivacy(next);
+            await setPrivacySettings(next);
+          }}
+        >
+          <ThemedText style={{ color: '#fff' }}>{privacy.privateMode ? 'Bật' : 'Tắt'}</ThemedText>
+        </Pressable>
+      </View>
     </ThemedView>
   );
 }
