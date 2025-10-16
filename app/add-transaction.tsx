@@ -22,6 +22,7 @@ import { useThemeColor } from '@/hooks/use-theme-color';
 import { database, getTodayDateString } from '@/lib/database';
 import { getPrivacySettings } from '@/lib/settings';
 import { getCurrentUser } from '@/lib/auth';
+import { getCurrentHouseholdId } from '@/lib/family';
 import { logDailyProgress } from '@/lib/gamification';
 import { 
   TransactionFormData, 
@@ -222,7 +223,7 @@ export default function AddTransactionScreen() {
     try {
       setLoading(true);
       await database.init();
-      const [privacy, user] = await Promise.all([getPrivacySettings(), getCurrentUser()]);
+      const [privacy, user, householdId] = await Promise.all([getPrivacySettings(), getCurrentUser(), getCurrentHouseholdId()]);
 
       const transactionData = {
         amount: parseFloat(formData.amount),
@@ -233,7 +234,7 @@ export default function AddTransactionScreen() {
         source: 'manual' as const,
         is_private: !!privacy.privateMode,
         owner_user_id: user?.id || null,
-        household_id: null as any,
+        household_id: householdId || null,
       };
 
       let newId: string | undefined;
