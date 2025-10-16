@@ -1,5 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { createClient, SupabaseClient, type RealtimeChannel } from '@supabase/supabase-js';
+import { getSupabase } from '@/lib/auth';
 // Simple event emitter to notify UI of database changes
 type DbEvent = 'transactions_changed' | 'category_budgets_changed' | 'loans_changed';
 class DbEventEmitter {
@@ -188,11 +189,16 @@ class DatabaseManager {
 
     try {
       this.isInitializing = true;
-      // Initialize Supabase client if env is provided
-      const sbUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-      const sbKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
-      if (sbUrl && sbKey) {
-        this.sb = createClient(sbUrl, sbKey);
+      // Use the authenticated Supabase client (shares session with auth.ts)
+      const shared = getSupabase();
+      if (shared) {
+        this.sb = shared;
+      } else {
+        const sbUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+        const sbKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+        if (sbUrl && sbKey) {
+          this.sb = createClient(sbUrl, sbKey);
+        }
       }
       const { getUserDbFileName } = await import('@/lib/user');
       const dbFile = await getUserDbFileName();
@@ -525,15 +531,34 @@ class DatabaseManager {
     const { amount, description, category, date, type, source, is_private, household_id, owner_user_id } = transaction;
       // Supabase-first
       if (this.sb) {
-        const { data, error } = await this.sb
-          .from('transactions')
-          .insert({ amount, description: description.trim(), category: category.trim(), date, type, source, is_private: !!is_private, household_id: household_id || null, owner_user_id: owner_user_id || null })
-          .select('id')
-          .single();
-        if (error) throw new DatabaseException('INSERT_FAILED', error.message as any);
-        const newId = data!.id as string;
-        databaseEvents.emit('transactions_changed');
-        return newId;
+        // Ensure owner_user_id = auth.uid() for RLS
+        try {
+          const sb = getSupabase();
+          const authUser = (await sb!.auth.getUser()).data.user;
+          const owner = authUser?.id || owner_user_id || null;
+          const payload: any = {
+            amount,
+            description: description.trim(),
+            category: category.trim(),
+            date,
+            type,
+            source,
+            is_private: !!is_private,
+            household_id: household_id || null,
+            owner_user_id: owner,
+          };
+          const { data, error } = await this.sb
+            .from('transactions')
+            .insert(payload)
+            .select('id')
+            .single();
+          if (error) throw new DatabaseException('INSERT_FAILED', error.message as any);
+          const newId = data!.id as string;
+          databaseEvents.emit('transactions_changed');
+          return newId;
+        } catch (e: any) {
+          throw e instanceof DatabaseException ? e : new DatabaseException('INSERT_FAILED', e?.message || 'Insert failed');
+        }
       }
 
       const result = await this.db!.runAsync(
@@ -1144,7 +1169,11 @@ export const formatDate = (dateString: string): string => {
 
 // Helper function to get date string for today
 export const getTodayDateString = (): string => {
-  return new Date().toISOString().split('T')[0];
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 };
 
 // Helper function to categorize transactions automatically

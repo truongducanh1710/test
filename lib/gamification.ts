@@ -3,19 +3,12 @@ import { database, getTodayDateString } from '@/lib/database';
 
 type StreakInfo = { current: number; best: number; completedToday: boolean };
 
-import { getUserDbFileName } from '@/lib/user';
 async function openDb(): Promise<SQLite.SQLiteDatabase> {
-  const file = await getUserDbFileName();
+  const file = await (await import('@/lib/user')).getUserDbFileName();
   return await SQLite.openDatabaseAsync(file);
 }
 
 async function createTables(db: SQLite.SQLiteDatabase) {
-  await db.execAsync(`
-    CREATE TABLE IF NOT EXISTS habit_logs (
-      date TEXT PRIMARY KEY,
-      count INTEGER NOT NULL DEFAULT 0
-    );
-  `);
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS user_wallet (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -32,10 +25,7 @@ async function createTables(db: SQLite.SQLiteDatabase) {
   `);
 }
 
-function toDateKey(d: Date): string {
-  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString().slice(0, 10);
-}
-
+// ----- Coins helpers -----
 export async function addCoins(amount: number): Promise<number> {
   const db = await openDb();
   await createTables(db);
@@ -61,54 +51,49 @@ export async function getCoins(): Promise<number> {
   return Number(row?.coins || 0);
 }
 
-async function computeStreakInternal(db: SQLite.SQLiteDatabase): Promise<{ current: number; best: number; completedToday: boolean }> {
-  const todayKey = getTodayDateString();
-  const rows = (await db.getAllAsync(
-    `SELECT date, count FROM habit_logs WHERE date <= ? ORDER BY date DESC LIMIT 365`,
-    [todayKey]
-  )) as { date: string; count: number }[];
+// ----- Streak + calendar from transactions -----
+function toDateKeyLocal(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${da}`;
+}
 
-  const map = new Map(rows.map(r => [r.date, r.count]));
-
-  // current streak: count from today backwards until first missing
-  let current = 0;
-  let cursor = new Date();
-  for (let i = 0; i < 365; i++) {
-    const key = toDateKey(cursor);
-    const has = (map.get(key) || 0) > 0;
-    if (has) {
-      current += 1;
-    } else {
-      break;
-    }
-    cursor.setDate(cursor.getDate() - 1);
+async function getTxDatesSet(rangeDays: number): Promise<Set<string>> {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - rangeDays + 1);
+  const startKey = toDateKeyLocal(start);
+  const endKey = toDateKeyLocal(end);
+  const txs = await database.getTransactions();
+  const set = new Set<string>();
+  for (const t of txs) {
+    if (!t.date) continue;
+    if (t.date >= startKey && t.date <= endKey) set.add(t.date);
   }
-
-  // best streak: scan all days and compute longest run
-  let best = 0;
-  let run = 0;
-  const scanCursor = new Date();
-  for (let i = 0; i < 365; i++) {
-    const key = toDateKey(scanCursor);
-    const has = (map.get(key) || 0) > 0;
-    if (has) {
-      run += 1;
-      best = Math.max(best, run);
-    } else {
-      run = 0;
-    }
-    scanCursor.setDate(scanCursor.getDate() - 1);
-  }
-
-  const completedToday = (map.get(todayKey) || 0) > 0;
-  return { current, best, completedToday };
+  return set;
 }
 
 export async function getStreak(): Promise<{ current: number; best: number }> {
-  const db = await openDb();
-  await createTables(db);
-  const s = await computeStreakInternal(db);
-  return { current: s.current, best: s.best };
+  const txSet = await getTxDatesSet(365);
+  // current streak
+  let current = 0;
+  let cursor = new Date();
+  for (let i = 0; i < 365; i++) {
+    const key = toDateKeyLocal(cursor);
+    if (txSet.has(key)) current += 1; else break;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  // best streak
+  let best = 0,
+      run = 0;
+  const scan = new Date();
+  for (let i = 0; i < 365; i++) {
+    const key = toDateKeyLocal(scan);
+    if (txSet.has(key)) { run += 1; best = Math.max(best, run); } else { run = 0; }
+    scan.setDate(scan.getDate() - 1);
+  }
+  return { current, best };
 }
 
 function milestoneReward(streak: number): number {
@@ -119,26 +104,17 @@ function milestoneReward(streak: number): number {
 }
 
 export async function logDailyProgress(date?: string): Promise<StreakInfo> {
-  const db = await openDb();
-  await createTables(db);
-  const key = date || getTodayDateString();
-
-  // upsert log for the day (increase count)
-  await db.runAsync(`INSERT INTO habit_logs (date, count) VALUES (?, 1) ON CONFLICT(date) DO UPDATE SET count = count + 1`, [key]);
-
-  // read back today's count to decide awards (only first time per day)
-  const row = (await db.getFirstAsync(`SELECT count FROM habit_logs WHERE date = ?`, [key])) as { count: number } | null;
-  const countToday = Number(row?.count || 0);
-
-  const { current, best, completedToday } = await computeStreakInternal(db);
-
-  // Base +10 only once per day; milestone only at the moment we first complete the day
+  const todayKey = date || getTodayDateString();
+  // Count transactions today to decide awards (first tx of the day)
+  const txs = await database.getTransactions();
+  const countToday = txs.filter(t => t.date === todayKey).length;
+  const { current, best } = await getStreak();
+  const completedToday = countToday > 0;
   if (countToday === 1) {
     await addCoins(10);
     const bonus = milestoneReward(current);
     if (bonus > 0) await addCoins(bonus);
   }
-
   return { current, best, completedToday };
 }
 
@@ -146,9 +122,6 @@ export async function logDailyProgress(date?: string): Promise<StreakInfo> {
 export type DayStatus = { date: string; day: number; isFuture: boolean; done: boolean; isToday: boolean };
 
 export async function getTwoWeekCalendarStatus(): Promise<DayStatus[]> {
-  const db = await openDb();
-  await createTables(db);
-
   const today = new Date();
   const dow = today.getDay(); // 0 Sun..6 Sat
   const isoDow = dow === 0 ? 7 : dow; // 1..7
@@ -166,53 +139,27 @@ export async function getTwoWeekCalendarStatus(): Promise<DayStatus[]> {
     days.push(d);
   }
 
-  const keys = days.map(toDateKey);
-  const placeholders = keys.map(() => '?').join(',');
-  const rows = (await db.getAllAsync(
-    `SELECT date, count FROM habit_logs WHERE date IN (${placeholders})`,
-    keys
-  )) as { date: string; count: number }[];
-  const map = new Map(rows.map(r => [r.date, r.count]));
+  const startKey = toDateKeyLocal(startPrevWeek);
+  const endKey = toDateKeyLocal(today);
+  const txs = await database.getTransactions();
+  const set = new Set<string>();
+  for (const t of txs) {
+    if (!t.date) continue;
+    if (t.date >= startKey && t.date <= endKey) set.add(t.date);
+  }
 
-  const todayKey = toDateKey(today);
-
+  const todayKey = toDateKeyLocal(today);
   return days.map(d => {
-    const key = toDateKey(d);
+    const key = toDateKeyLocal(d);
     const isFuture = d > today;
-    const done = (map.get(key) || 0) > 0;
+    const done = set.has(key);
     return { date: key, day: d.getDate(), isFuture, done, isToday: key === todayKey };
   });
 }
 
-// Backfill habit logs from existing transactions for the last N days
-export async function backfillHabitLogs(days = 90): Promise<void> {
-  const db = await openDb();
-  await createTables(db);
-  try {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(end.getDate() - days + 1);
-    const startKey = toDateKey(start);
-    const endKey = toDateKey(end);
-
-    const txs = await database.getTransactions();
-    const counts = new Map<string, number>();
-    for (const t of txs) {
-      if (!t.date) continue;
-      if (t.date >= startKey && t.date <= endKey) {
-        counts.set(t.date, (counts.get(t.date) || 0) + 1);
-      }
-    }
-
-    for (const [date, cnt] of counts.entries()) {
-      // Upsert with max semantics to avoid lowering existing counts
-      await db.runAsync(
-        `INSERT INTO habit_logs (date, count) VALUES (?, ?) 
-         ON CONFLICT(date) DO UPDATE SET count = CASE WHEN habit_logs.count < excluded.count THEN excluded.count ELSE habit_logs.count END`,
-        [date, cnt]
-      );
-    }
-  } catch {}
+// Backfill is no longer needed when deriving from transactions
+export async function backfillHabitLogs(_days = 90): Promise<void> {
+  return;
 }
 
 // ---- Rewards catalog & redeem ----

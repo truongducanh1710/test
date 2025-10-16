@@ -9,7 +9,8 @@ import { ThemedView } from '@/components/themed-view';
 import { CompactTransactionCard } from '@/components/TransactionCard';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { database, formatCurrency } from '@/lib/database';
+import { database, formatCurrency, databaseEvents } from '@/lib/database';
+import { getActiveUserId } from '@/lib/user';
 import { ensureNotificationPermissions, scheduleDailyHabitReminder } from '@/lib/notifications';
 import { getStreak, getCoins, getTwoWeekCalendarStatus, DayStatus, backfillHabitLogs } from '@/lib/gamification';
 import { Transaction, TransactionSummary, CategorySummary } from '@/types/transaction';
@@ -20,6 +21,11 @@ const { width } = Dimensions.get('window');
 let homeSummaryCache: TransactionSummary | null = null;
 let homeRecentCache: Transaction[] | null = null;
 let homeTopCache: CategorySummary[] | null = null;
+export function clearHomeHabitState() {
+  homeSummaryCache = null;
+  homeRecentCache = null;
+  homeTopCache = null;
+}
 
 export default function HomeScreen() {
   const [summary, setSummary] = useState<TransactionSummary>({
@@ -81,18 +87,37 @@ export default function HomeScreen() {
         } catch {}
       })();
 
-      // load habit info in background
-      (async () => {
+      // load habit info in background (only after we have a signed-in user)
+      const refreshHabit = async () => {
         try {
-          // show immediate placeholder to ensure 14 circles render
           setCalendar(buildTwoWeekPlaceholder());
-          // sync logs from existing transactions (last 90 days) before rendering
+          const uid = await getActiveUserId();
+          if (!uid) return;
+          const now = new Date();
+          const start90 = new Date(now);
+          start90.setDate(now.getDate() - 89);
+          const startKey = new Date(Date.UTC(start90.getFullYear(), start90.getMonth(), start90.getDate())).toISOString().slice(0,10);
+          const endKey = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())).toISOString().slice(0,10);
+          const totals90 = await database.getTotalsByType(startKey, endKey);
+          const hasAnyTx90 = (Number(totals90.income || 0) + Number(totals90.expense || 0)) > 0;
+          if (!hasAnyTx90) {
+            setCalendar(buildTwoWeekPlaceholder());
+            setStreakInfo({ current: 0, best: 0 });
+            setCoins(0);
+            return;
+          }
           await backfillHabitLogs(90);
           setCalendar(await getTwoWeekCalendarStatus());
           setStreakInfo(await getStreak());
           setCoins(await getCoins());
         } catch {}
-      })();
+      };
+      refreshHabit();
+
+      // Also refresh habit card immediately when transactions change
+      const onTx = () => { refreshHabit(); };
+      databaseEvents.on('transactions_changed', onTx);
+      return () => databaseEvents.off('transactions_changed', onTx);
     }, [])
   );
 

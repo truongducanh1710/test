@@ -56,8 +56,9 @@ export default function AuthScreen() {
            if (hs.enabled) await scheduleDailyHabitReminder(hs.hour);
            // Switch DB to the new user's file by closing current connection
                        try { await database.close(); } catch {}
-            try { const { clearFinanceCaches } = await import('@/app/(tabs)/explore'); clearFinanceCaches(); } catch {}
-            router.replace('/');
+                         try { const { clearFinanceCaches } = await import('@/app/(tabs)/explore'); clearFinanceCaches(); } catch {}
+             try { const { clearHomeHabitState } = await import('@/app/(tabs)/index'); clearHomeHabitState(); } catch {}
+             router.replace('/');
         }
       } else if (mode === 'signup') {
         await signUpWithEmail(email.trim(), password);

@@ -19,7 +19,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { database, getTodayDateString } from '@/lib/database';
+import { database, getTodayDateString, getUserHouseholds } from '@/lib/database';
 import { getPrivacySettings } from '@/lib/settings';
 import { getCurrentUser } from '@/lib/auth';
 import { getCurrentHouseholdId } from '@/lib/family';
@@ -226,6 +226,15 @@ export default function AddTransactionScreen() {
       await database.init();
       const [privacy, user, householdId] = await Promise.all([getPrivacySettings(), getCurrentUser(), getCurrentHouseholdId()]);
 
+      // Only set household_id if the user is a member of that household; otherwise null to satisfy RLS
+      let safeHouseholdId: string | null = null;
+      try {
+        if (user?.id && householdId) {
+          const households = await getUserHouseholds(user.id);
+          if (households.some(h => h.id === householdId)) safeHouseholdId = householdId;
+        }
+      } catch {}
+
       const transactionData = {
         amount: parseFloat(formData.amount),
         description: formData.description.trim(),
@@ -235,7 +244,7 @@ export default function AddTransactionScreen() {
         source: 'manual' as const,
         is_private: isPrivate || !!privacy.privateMode,
         owner_user_id: user?.id || null,
-        household_id: householdId || null,
+        household_id: safeHouseholdId,
       };
 
       let newId: string | undefined;
@@ -280,9 +289,12 @@ export default function AddTransactionScreen() {
   const handleDateChange = (event: any, selectedDate?: Date) => {
     setShowDatePicker(false);
     if (selectedDate) {
+      const y = selectedDate.getFullYear();
+      const m = String(selectedDate.getMonth() + 1).padStart(2, '0');
+      const d = String(selectedDate.getDate()).padStart(2, '0');
       setFormData(prev => ({
         ...prev,
-        date: selectedDate.toISOString().split('T')[0]
+        date: `${y}-${m}-${d}`
       }));
     }
   };
@@ -290,7 +302,10 @@ export default function AddTransactionScreen() {
   const handleDueDateChange = (event: any, selectedDate?: Date) => {
     setShowDuePicker(false);
     if (selectedDate) {
-      setLoanDueDate(selectedDate.toISOString().split('T')[0]);
+      const y = selectedDate.getFullYear();
+      const m = String(selectedDate.getMonth() + 1).padStart(2, '0');
+      const d = String(selectedDate.getDate()).padStart(2, '0');
+      setLoanDueDate(`${y}-${m}-${d}`);
     }
   };
 
