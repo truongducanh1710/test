@@ -41,6 +41,7 @@ export default function AddTransactionScreen() {
   const [loanDueDate, setLoanDueDate] = useState<string | null>(null);
   const [showDuePicker, setShowDuePicker] = useState(false);
   const [isParseable, setIsParseable] = useState(false);
+  const [suggestedCategory, setSuggestedCategory] = useState<string | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
   
@@ -86,6 +87,31 @@ export default function AddTransactionScreen() {
     }
   }, [isParseable, pulseAnim]);
 
+  const inferCategory = (text: string, assumedType: TransactionType): string | null => {
+    const t = text.toLowerCase();
+    // Loan-related first (overrides type as needed)
+    if (/\bcho vay\b/.test(t)) return 'Cho vay';
+    if (/\bvay\b/.test(t)) return 'Vay';
+
+    // Income
+    if (assumedType === 'income') {
+      if (/(lương|thu nhập|bonus|thưởng)/.test(t)) return 'Lương';
+    }
+
+    // Expense common mappings
+    if (/(cafe|cà phê|an|ăn |uống|trà sữa|quán)/.test(t)) return 'Ăn uống';
+    if (/(grab|be |taxi|xăng|xang|xe bus|bus)/.test(t)) return 'Di chuyển';
+    if (/(shopee|lazada|tiki)/.test(t)) return 'Mua sắm';
+    if (/(điện|nuoc|nước|internet|wifi|cáp|cap|truyen hinh)/.test(t)) return 'Hóa đơn';
+    if (/(tiền nhà|thuê nhà|rent)/.test(t)) return 'Nhà ở';
+    if (/(bảo hiểm|bao hiem)/.test(t)) return 'Bảo hiểm';
+    if (/(bệnh viện|ben h|thuốc|thuoc|clinic)/.test(t)) return 'Sức khỏe';
+    if (/(học|hoc|học phí|hoc phi)/.test(t)) return 'Giáo dục';
+    if (/(thẻ tín dụng|the tin dung|credit)/.test(t)) return 'Tín dụng';
+
+    return null;
+  };
+
   const parseVoiceText = (input: string) => {
     const text = (input || '').toLowerCase();
     // amount with unit
@@ -120,11 +146,11 @@ export default function AddTransactionScreen() {
       date = today.toISOString().split('T')[0];
     }
 
-    return { amountNumber, type, date };
+    return { amountNumber, type, date, rawText: text };
   };
 
   const handleParse = () => {
-    const { amountNumber, type, date } = parseVoiceText(formData.description);
+    const { amountNumber, type, date, rawText } = parseVoiceText(formData.description);
     if (amountNumber == null && !type && !date) return;
     setFormData(prev => ({
       ...prev,
@@ -132,6 +158,19 @@ export default function AddTransactionScreen() {
       type: type || prev.type,
       date: date || prev.date,
     }));
+
+    // Category suggestion per option B
+    const assumedType = (type || formData.type) as TransactionType;
+    const suggestion = inferCategory(rawText, assumedType);
+    if (suggestion) {
+      if (formData.category === 'Khác') {
+        setFormData(prev => ({ ...prev, category: suggestion }));
+        setSuggestedCategory(null);
+      } else {
+        setSuggestedCategory(suggestion);
+        setShowCategoryPicker(true);
+      }
+    }
   };
 
   const loadTransaction = async (id: string) => {
@@ -385,7 +424,7 @@ export default function AddTransactionScreen() {
           <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}> 
             <TextInput
               style={[styles.textInput, { color: textColor }]}
-              placeholder="Nhập mô tả giao dịch"
+              placeholder="Gõ hoặc nhấn nút ghi âm. Ví dụ: “-45k cafe hôm qua”. Nhấn ✨ để tự điền."
               placeholderTextColor={textColor + '60'}
               value={formData.description}
               onChangeText={(text) => setFormData(prev => ({ ...prev, description: text }))}
@@ -477,7 +516,7 @@ export default function AddTransactionScreen() {
                     key={category}
                     style={[
                       styles.categoryItem,
-                      formData.category === category && { backgroundColor: tintColor + '20' }
+                      (formData.category === category || suggestedCategory === category) && { backgroundColor: tintColor + '20' }
                     ]}
                     onPress={() => {
                       setFormData(prev => ({ ...prev, category }));
@@ -494,7 +533,7 @@ export default function AddTransactionScreen() {
                       {getCategoryIcon(category)}
                     </ThemedText>
                     <ThemedText style={styles.categoryName}>{category}</ThemedText>
-                    {formData.category === category && (
+                    {(formData.category === category || suggestedCategory === category) && (
                       <Ionicons name="checkmark" size={20} color={tintColor} />
                     )}
                   </Pressable>
