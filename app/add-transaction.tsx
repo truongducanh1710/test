@@ -48,6 +48,8 @@ export default function AddTransactionScreen() {
   const [isPrivate, setIsPrivate] = useState(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
+
+  const formatThousands = (digits: string) => digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -430,13 +432,13 @@ export default function AddTransactionScreen() {
               style={[styles.amountInput, { color: textColor }]}
               placeholder="0"
               placeholderTextColor={textColor + '60'}
-              value={formData.amount}
+              value={formData.amount.replace(/\./g, '').replace(/\B(?=(\d{3})+(?!\d))/g, '.')}
               onChangeText={(text) => {
-                // Only allow numbers and decimal point
-                const numericText = text.replace(/[^0-9.]/g, '');
-                setFormData(prev => ({ ...prev, amount: numericText }));
+                // Strip separators to store pure digits
+                const digits = text.replace(/[^0-9]/g, '');
+                setFormData(prev => ({ ...prev, amount: digits }));
               }}
-              keyboardType="numeric"
+              keyboardType="number-pad"
             />
           </ThemedView>
         </ThemedView>
