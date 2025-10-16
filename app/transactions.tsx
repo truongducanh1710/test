@@ -108,37 +108,40 @@ export default function TransactionsScreen() {
         result = result.filter(t => t.amount <= filters.maxAmount!);
       }
 
-      // Apply sorting
+      // Apply sorting (unify with DB: date DESC, then created_at DESC)
       result.sort((a, b) => {
-        let aValue: any, bValue: any;
-        
-        switch (sortOptions.field) {
-          case 'date':
-            aValue = new Date(a.date);
-            bValue = new Date(b.date);
-            break;
-          case 'amount':
-            aValue = a.amount;
-            bValue = b.amount;
-            break;
-          case 'description':
-            aValue = a.description.toLowerCase();
-            bValue = b.description.toLowerCase();
-            break;
-          case 'category':
-            aValue = a.category.toLowerCase();
-            bValue = b.category.toLowerCase();
-            break;
-          default:
-            aValue = a.date;
-            bValue = b.date;
+        if (sortOptions.field === 'date') {
+          if (a.date !== b.date) {
+            const cmp = a.date < b.date ? 1 : -1; // DESC by date string YYYY-MM-DD
+            return sortOptions.order === 'asc' ? -cmp : cmp;
+          }
+          const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
+          if (aCreated !== bCreated) {
+            const cmp = aCreated < bCreated ? 1 : -1; // DESC by created_at
+            return sortOptions.order === 'asc' ? -cmp : cmp;
+          }
+          // Deterministic fallback: id DESC (works if numeric-like)
+          const aId = a.id ? Number(a.id) : 0;
+          const bId = b.id ? Number(b.id) : 0;
+          const cmp = aId < bId ? 1 : -1;
+          return sortOptions.order === 'asc' ? -cmp : cmp;
         }
 
-        if (sortOptions.order === 'asc') {
-          return aValue > bValue ? 1 : -1;
-        } else {
-          return aValue < bValue ? 1 : -1;
+        // Other fields keep existing behavior
+        let aValue: any, bValue: any;
+        switch (sortOptions.field) {
+          case 'amount':
+            aValue = a.amount; bValue = b.amount; break;
+          case 'description':
+            aValue = a.description.toLowerCase(); bValue = b.description.toLowerCase(); break;
+          case 'category':
+            aValue = a.category.toLowerCase(); bValue = b.category.toLowerCase(); break;
+          default:
+            aValue = a.date; bValue = b.date;
         }
+        if (sortOptions.order === 'asc') return aValue > bValue ? 1 : -1;
+        return aValue < bValue ? 1 : -1;
       });
 
       setTransactions(result);
@@ -291,7 +294,18 @@ export default function TransactionsScreen() {
       groups.get(key)!.push(t);
     }
     const sortedKeys = Array.from(groups.keys()).sort((a,b) => (a > b ? -1 : 1));
-    return sortedKeys.map(k => ({ title: formatSectionTitle(k), data: groups.get(k)!.sort((a,b) => (a.date < b.date ? 1 : -1)) }));
+    return sortedKeys.map(k => ({
+      title: formatSectionTitle(k),
+      data: groups.get(k)!.sort((a,b) => {
+        if (a.date !== b.date) return a.date < b.date ? 1 : -1; // DESC date
+        const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
+        if (aCreated !== bCreated) return aCreated < bCreated ? 1 : -1; // DESC created_at
+        const aId = a.id ? Number(a.id) : 0;
+        const bId = b.id ? Number(b.id) : 0;
+        return aId < bId ? 1 : -1;
+      })
+    }));
   }, [transactions]);
 
   const renderLeftActions = (item: Transaction) => (_progress: any, _dragX: any) => (
