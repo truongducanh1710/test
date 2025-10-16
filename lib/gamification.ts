@@ -3,9 +3,10 @@ import { database, getTodayDateString } from '@/lib/database';
 
 type StreakInfo = { current: number; best: number; completedToday: boolean };
 
+import { getUserDbFileName } from '@/lib/user';
 async function openDb(): Promise<SQLite.SQLiteDatabase> {
-  // Use the same database file name as the app
-  return await SQLite.openDatabaseAsync('finance_tracker.db');
+  const file = await getUserDbFileName();
+  return await SQLite.openDatabaseAsync(file);
 }
 
 async function createTables(db: SQLite.SQLiteDatabase) {

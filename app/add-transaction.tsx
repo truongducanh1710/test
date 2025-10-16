@@ -45,6 +45,7 @@ export default function AddTransactionScreen() {
   const [showDuePicker, setShowDuePicker] = useState(false);
   const [isParseable, setIsParseable] = useState(false);
   const [suggestedCategory, setSuggestedCategory] = useState<string | null>(null);
+  const [isPrivate, setIsPrivate] = useState(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
   
@@ -232,7 +233,7 @@ export default function AddTransactionScreen() {
         date: formData.date,
         type: formData.type,
         source: 'manual' as const,
-        is_private: !!privacy.privateMode,
+        is_private: isPrivate || !!privacy.privateMode,
         owner_user_id: user?.id || null,
         household_id: householdId || null,
       };
@@ -507,6 +508,25 @@ export default function AddTransactionScreen() {
           </Pressable>
         </ThemedView>
 
+        {/* Privacy Toggle */}
+        <ThemedView style={styles.section}>
+          <Pressable
+            style={[styles.privacyToggle, { borderColor: tintColor + '30', backgroundColor: chipBg }]}
+            onPress={() => setIsPrivate(!isPrivate)}
+          >
+            <ThemedView style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'transparent' }}>
+              <Ionicons name={isPrivate ? "lock-closed" : "lock-open-outline"} size={20} color={isPrivate ? tintColor : textColor + '80'} />
+              <ThemedText style={{ fontWeight: '600' }}>Giao dịch riêng tư</ThemedText>
+            </ThemedView>
+            <ThemedView style={[styles.switch, { backgroundColor: isPrivate ? tintColor : textColor + '30' }]}>
+              <ThemedView style={[styles.switchThumb, { transform: [{ translateX: isPrivate ? 20 : 0 }] }]} />
+            </ThemedView>
+          </Pressable>
+          <ThemedText style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
+            Chỉ bạn mới thấy chi tiết giao dịch này. Tổng số vẫn được tính vào báo cáo gia đình.
+          </ThemedText>
+        </ThemedView>
+
         {/* Category Picker Modal */}
         {showCategoryPicker && (
           <ThemedView style={styles.modal}>
@@ -713,6 +733,28 @@ const styles = StyleSheet.create({
   },
   categoryIcon: {
     fontSize: 20,
+  },
+  privacyToggle: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 15,
+    paddingVertical: 14,
+  },
+  switch: {
+    width: 48,
+    height: 28,
+    borderRadius: 14,
+    padding: 2,
+    justifyContent: 'center',
+  },
+  switchThumb: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#fff',
   },
   modal: {
     position: 'absolute',

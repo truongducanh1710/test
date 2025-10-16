@@ -6,11 +6,18 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { database, formatCurrency, type Budget, databaseEvents } from '@/lib/database';
+import { database, formatCurrency, type Budget, databaseEvents, getHouseholdMonthlyTotals } from '@/lib/database';
 import { ensureNotificationPermissions, notifyBudgetThreshold, setupAndroidChannels, scheduleDailyDigest } from '@/lib/notifications';
 import { TransactionSummary, CategorySummary } from '@/types/transaction';
 
 const { width } = Dimensions.get('window');
+
+export function clearFinanceCaches() {
+  financeSummaryCache = null;
+  financeMonthlyCache = null;
+  financeTopCache.clear();
+  financeBudgetCache = null;
+}
 
 type RangeKey = 'week' | 'thisMonth' | 'lastMonth';
 
@@ -102,14 +109,22 @@ export default function FinanceScreen() {
         try {
           // Always refresh background
           await database.init();
-          database.enableRealtime();
+          // Bind realtime to current household if available
+          const hhId = (await import('@/lib/family')).getCurrentHouseholdId ? await (await import('@/lib/family')).getCurrentHouseholdId() : null;
+          database.enableRealtime(hhId || undefined);
           await setupAndroidChannels();
           await ensureNotificationPermissions();
           const now = new Date();
           // Summary
           const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
           const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
-          const totals = await database.getTotalsByType(startOfMonth, endOfMonth);
+          let totals = await database.getTotalsByType(startOfMonth, endOfMonth);
+          try {
+            if (hhId) {
+              const rpc = await getHouseholdMonthlyTotals(hhId, startOfMonth, endOfMonth);
+              totals = { income: Number(rpc.total_income || 0), expense: Number(rpc.total_expense || 0) } as any;
+            }
+          } catch {}
           const tx = await database.getTransactions(100);
           const nextSummary = { totalIncome: totals.income, totalExpense: totals.expense, balance: totals.income - totals.expense, transactionCount: tx.length };
           setCurrentMonthSummary(nextSummary);
@@ -671,6 +686,15 @@ export default function FinanceScreen() {
             <Ionicons name="camera-outline" size={32} color="white" />
             <ThemedText style={styles.toolTitle}>Quét Sao Kê</ThemedText>
             <ThemedText style={styles.toolSubtitle}>AI tự động</ThemedText>
+          </Pressable>
+
+        <Pressable 
+            style={[styles.toolCard, { backgroundColor: '#2563eb' }]} 
+            onPress={() => router.push('/family' as any)}
+          >
+            <Ionicons name="people-outline" size={32} color="white" />
+            <ThemedText style={styles.toolTitle}>Gia đình</ThemedText>
+            <ThemedText style={styles.toolSubtitle}>Chung & riêng tư</ThemedText>
           </Pressable>
           </ThemedView>
       </ThemedView>

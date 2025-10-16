@@ -7,8 +7,9 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { buildFinanceContext90d } from '@/lib/ai-advisor';
 import { chatFinance, ChatMessage } from '@/lib/openai';
+import { nsKey } from '@/lib/user';
 
-const STORAGE_KEY = 'assistant.thread.v1';
+const STORAGE_KEY_BASE = 'assistant.thread.v1';
 
 export default function AssistantScreen() {
   const colorScheme = useColorScheme();
@@ -20,14 +21,16 @@ export default function AssistantScreen() {
 
   const loadThread = useCallback(async () => {
     try {
-      const raw = await AsyncStorage.getItem(STORAGE_KEY);
+      const key = await nsKey(STORAGE_KEY_BASE);
+      const raw = await AsyncStorage.getItem(key);
       if (raw) setMessages(JSON.parse(raw));
     } catch {}
   }, []);
 
   const saveThread = useCallback(async (data: ChatMessage[]) => {
     try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data.slice(-30)));
+      const key = await nsKey(STORAGE_KEY_BASE);
+      await AsyncStorage.setItem(key, JSON.stringify(data.slice(-30)));
     } catch {}
   }, []);
 

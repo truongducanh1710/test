@@ -194,7 +194,9 @@ class DatabaseManager {
       if (sbUrl && sbKey) {
         this.sb = createClient(sbUrl, sbKey);
       }
-      this.db = await SQLite.openDatabaseAsync('finance_tracker.db');
+      const { getUserDbFileName } = await import('@/lib/user');
+      const dbFile = await getUserDbFileName();
+      this.db = await SQLite.openDatabaseAsync(dbFile);
       
       // Enable foreign key constraints and WAL mode for better performance
       await this.db.execAsync('PRAGMA foreign_keys = ON');
@@ -213,14 +215,27 @@ class DatabaseManager {
   }
 
   // Enable Supabase realtime for cross-source updates
-  enableRealtime() {
+  // If householdId is provided, only listen to changes for that household
+  enableRealtime(householdId?: string) {
     if (!this.sb || this.realtimeBound) return;
     try {
-      this.realtimeChannel = this.sb
-        .channel('app-changes')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => {
+      let channel = this.sb.channel('app-changes');
+      
+      if (householdId) {
+        // Listen only to transactions for this household
+        channel = channel.on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'transactions', filter: `household_id=eq.${householdId}` },
+          () => { databaseEvents.emit('transactions_changed'); }
+        );
+      } else {
+        // Listen to all transactions (fallback)
+        channel = channel.on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => {
           databaseEvents.emit('transactions_changed');
-        })
+        });
+      }
+
+      channel
         .on('postgres_changes', { event: '*', schema: 'public', table: 'category_budgets' }, () => {
           databaseEvents.emit('category_budgets_changed');
         })
@@ -228,9 +243,19 @@ class DatabaseManager {
           databaseEvents.emit('loans_changed');
         })
         .subscribe();
+      this.realtimeChannel = channel;
       this.realtimeBound = true;
     } catch (e) {
       // noop – realtime optional
+    }
+  }
+
+  // Disable realtime (for switching households)
+  disableRealtime() {
+    if (this.realtimeChannel) {
+      this.realtimeChannel.unsubscribe();
+      this.realtimeChannel = null;
+      this.realtimeBound = false;
     }
   }
 
@@ -844,43 +869,8 @@ class DatabaseManager {
 
   // Seed helpers (for demo data)
   async seedFakeMonthIfEmpty(month: number, year: number): Promise<boolean> {
-    await this.ensureInitialized();
-    const start = this.toDateString(new Date(year, month - 1, 1));
-    const end = this.toDateString(new Date(year, month, 0));
-
-    // Check existing
-    let hasData = false;
-    if (this.sb) {
-      const { count, error } = await this.sb
-        .from('transactions')
-        .select('id', { count: 'exact', head: true })
-        .gte('date', start)
-        .lte('date', end);
-      if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
-      hasData = (count || 0) > 0;
-    } else {
-      const row = await this.db!.getFirstAsync(
-        `SELECT COUNT(*) as cnt FROM transactions WHERE date >= ? AND date <= ?`,
-        [start, end]
-      ) as { cnt: number } | null;
-      hasData = !!row && Number((row as any).cnt) > 0;
-    }
-    if (hasData) return false;
-
-    // Build sample records
-    const day = (d: number) => this.toDateString(new Date(year, month - 1, d));
-    const samples: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>[] = [
-      { amount: 6500000, description: 'Lương tháng', category: 'Lương', date: day(5), type: 'income', source: 'manual' },
-      { amount: 1200000, description: 'Ăn uống', category: 'Ăn uống', date: day(8), type: 'expense', source: 'manual' },
-      { amount: 800000, description: 'Xăng xe', category: 'Xăng xe', date: day(10), type: 'expense', source: 'manual' },
-      { amount: 950000, description: 'Mua sắm', category: 'Mua sắm', date: day(12), type: 'expense', source: 'manual' },
-      { amount: 2000000, description: 'Freelance', category: 'Lương', date: day(15), type: 'income', source: 'manual' },
-      { amount: 450000, description: 'Di chuyển', category: 'Di chuyển', date: day(18), type: 'expense', source: 'manual' },
-      { amount: 300000, description: 'Cafe & gặp gỡ', category: 'Ăn uống', date: day(22), type: 'expense', source: 'manual' },
-    ];
-
-    await this.addTransactionsBatch(samples);
-    return true;
+    // Disabled seeding for production/users: always return false
+    return false;
   }
 
   async seedFakeMonthsIfEmpty(months: number[], year: number): Promise<void> {
@@ -1185,3 +1175,136 @@ export const getCategoryFromDescription = (description: string): string => {
   
   return 'Khác';
 };
+
+// ===== Household APIs (Supabase only) =====
+export interface Household {
+  id: string;
+  name: string;
+  created_by: string;
+  created_at?: string;
+}
+
+export interface HouseholdMember {
+  id: string;
+  household_id: string;
+  user_id: string;
+  role: 'admin' | 'member';
+  joined_at?: string;
+}
+
+export interface HouseholdInvite {
+  url: string;
+  token: string;
+  expires_at: string;
+}
+
+/**
+ * Tạo household mới (người tạo tự động trở thành admin)
+ */
+export async function createHousehold(name: string, userId: string): Promise<string> {
+  await database.init();
+  const sb = (database as any).sb;
+  if (!sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+
+  const { data, error } = await sb
+    .from('households')
+    .insert({ name, created_by: userId })
+    .select('id')
+    .single();
+  if (error) throw new DatabaseException('INSERT_FAILED', error.message);
+
+  const householdId = data!.id as string;
+
+  // Thêm người tạo vào household_members với role admin
+  const { error: memberError } = await sb
+    .from('household_members')
+    .insert({ household_id: householdId, user_id: userId, role: 'admin' });
+  if (memberError) throw new DatabaseException('INSERT_FAILED', memberError.message);
+
+  return householdId;
+}
+
+/**
+ * Lấy danh sách households mà user là thành viên
+ */
+export async function getUserHouseholds(userId: string): Promise<Household[]> {
+  await database.init();
+  const sb = (database as any).sb;
+  if (!sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+
+  const { data, error } = await sb
+    .from('household_members')
+    .select('household_id, households(*)')
+    .eq('user_id', userId);
+  if (error) throw new DatabaseException('QUERY_ERROR', error.message);
+
+  return ((data || []) as any[]).map((r: any) => r.households).filter(Boolean);
+}
+
+/**
+ * Lấy danh sách thành viên trong household
+ */
+export async function getHouseholdMembers(householdId: string): Promise<HouseholdMember[]> {
+  await database.init();
+  const sb = (database as any).sb;
+  if (!sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+
+  const { data, error } = await sb
+    .from('household_members')
+    .select('*')
+    .eq('household_id', householdId)
+    .order('joined_at', { ascending: true });
+  if (error) throw new DatabaseException('QUERY_ERROR', error.message);
+
+  return (data || []) as HouseholdMember[];
+}
+
+/**
+ * Tạo link mời vào household (gọi RPC)
+ */
+export async function createHouseholdInvite(householdId: string): Promise<HouseholdInvite> {
+  await database.init();
+  const sb = (database as any).sb;
+  if (!sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+
+  const { data, error } = await sb.rpc('create_household_invite', { p_household_id: householdId });
+  if (error) throw new DatabaseException('RPC_ERROR', error.message);
+
+  return data as HouseholdInvite;
+}
+
+/**
+ * Chấp nhận lời mời tham gia household (gọi RPC)
+ */
+export async function acceptHouseholdInvite(token: string): Promise<{ household_id: string; already_member: boolean }> {
+  await database.init();
+  const sb = (database as any).sb;
+  if (!sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+
+  const { data, error } = await sb.rpc('accept_household_invite', { p_token: token });
+  if (error) throw new DatabaseException('RPC_ERROR', error.message);
+
+  return data as { household_id: string; already_member: boolean };
+}
+
+/**
+ * Gọi RPC để lấy tổng hợp household (dùng cho dashboard)
+ */
+export async function getHouseholdMonthlyTotals(
+  householdId: string,
+  startDate: string,
+  endDate: string
+): Promise<{ total_income: number; total_expense: number; transaction_count: number }> {
+  await database.init();
+  const sb = (database as any).sb;
+  if (!sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+
+  const { data, error } = await sb.rpc('household_monthly_totals', {
+    p_household_id: householdId,
+    p_start: startDate,
+    p_end: endDate,
+  });
+  if (error) throw new DatabaseException('RPC_ERROR', error.message);
+
+  return data as { total_income: number; total_expense: number; transaction_count: number };
+}

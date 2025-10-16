@@ -1,11 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 
-const KEY = 'family.currentHouseholdId.v1';
+import { nsKey } from '@/lib/user';
+
+const KEY_BASE = 'family.currentHouseholdId.v1';
 
 export async function getCurrentHouseholdId(): Promise<string | null> {
   try {
-    return (await AsyncStorage.getItem(KEY)) || null;
+    const key = await nsKey(KEY_BASE);
+    return (await AsyncStorage.getItem(key)) || null;
   } catch {
     return null;
   }
@@ -13,8 +16,9 @@ export async function getCurrentHouseholdId(): Promise<string | null> {
 
 export async function setCurrentHouseholdId(id: string | null): Promise<void> {
   try {
-    if (!id) await AsyncStorage.removeItem(KEY);
-    else await AsyncStorage.setItem(KEY, id);
+    const key = await nsKey(KEY_BASE);
+    if (!id) await AsyncStorage.removeItem(key);
+    else await AsyncStorage.setItem(key, id);
   } catch {}
 }
 

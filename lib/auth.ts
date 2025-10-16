@@ -26,18 +26,57 @@ export async function getCurrentUser(): Promise<User | null> {
   return data.user ?? null;
 }
 
-export async function signInWithEmailMagicLink(email: string): Promise<void> {
+/**
+ * Đăng ký tài khoản mới với Email + Password.
+ * Supabase sẽ gửi email xác nhận.
+ */
+export async function signUpWithEmail(email: string, password: string): Promise<void> {
   const sb = getSupabase();
   if (!sb) throw new Error('Supabase chưa được cấu hình');
   const redirectTo = Linking.createURL('/auth');
-  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo, shouldCreateUser: true } });
+  const { error } = await sb.auth.signUp({
+    email,
+    password,
+    options: { emailRedirectTo: redirectTo },
+  });
   if (error) throw error;
 }
 
-export async function verifyEmailOtp(email: string, token: string): Promise<void> {
+/**
+ * Đăng nhập với Email + Password.
+ */
+export async function signInWithEmail(email: string, password: string): Promise<void> {
   const sb = getSupabase();
   if (!sb) throw new Error('Supabase chưa được cấu hình');
-  const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
+  const { error } = await sb.auth.signInWithPassword({
+    email,
+    password,
+  });
+  if (error) throw error;
+}
+
+/**
+ * Gửi email reset mật khẩu.
+ */
+export async function resetPassword(email: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) throw new Error('Supabase chưa được cấu hình');
+  const redirectTo = Linking.createURL('/reset-password');
+  const { error } = await sb.auth.resetPasswordForEmail(email, {
+    redirectTo,
+  });
+  if (error) throw error;
+}
+
+/**
+ * Cập nhật mật khẩu mới (sau khi reset).
+ */
+export async function updatePassword(newPassword: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) throw new Error('Supabase chưa được cấu hình');
+  const { error } = await sb.auth.updateUser({
+    password: newPassword,
+  });
   if (error) throw error;
 }
 
@@ -61,6 +100,10 @@ export async function handleDeepLink(url: string): Promise<boolean> {
 export async function signOut(): Promise<void> {
   const sb = getSupabase();
   if (!sb) return;
+  try {
+    const { cancelHabitReminders } = await import('@/lib/notifications');
+    await cancelHabitReminders();
+  } catch {}
   await sb.auth.signOut();
 }
 

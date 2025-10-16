@@ -32,6 +32,10 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
         <Stack.Screen name="auth" options={{ headerShown: false }} />
+        <Stack.Screen name="family/index" options={{ title: 'Gia đình' }} />
+        <Stack.Screen name="settings/index" options={{ title: 'Cài đặt' }} />
+        <Stack.Screen name="join" options={{ headerTitle: 'Tham gia gia đình' }} />
+        <Stack.Screen name="reset-password" options={{ headerTitle: 'Đặt lại mật khẩu' }} />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

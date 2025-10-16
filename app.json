@@ -47,7 +47,8 @@
           "color": "#667eea",
           "mode": "production"
         }
-      ]
+      ],
+      "expo-barcode-scanner"
     ],
     "experiments": {
       "typedRoutes": true,

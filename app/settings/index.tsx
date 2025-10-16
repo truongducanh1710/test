@@ -1,87 +1,147 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, Pressable } from 'react-native';
-import { ThemedText } from '@/components/themed-text';
+import { StyleSheet, Pressable, Alert, Switch, Platform } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { ThemedView } from '@/components/themed-view';
+import { ThemedText } from '@/components/themed-text';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { getHabitSettings, setHabitSettings, HabitSettings, getPrivacySettings, setPrivacySettings, PrivacySettings } from '@/lib/settings';
-import { ensureNotificationPermissions, scheduleDailyHabitReminder } from '@/lib/notifications';
+import { getHabitSettings, setHabitSettings, getPrivacySettings, setPrivacySettings } from '@/lib/settings';
+import { scheduleDailyHabitReminder } from '@/lib/notifications';
+import { useRouter } from 'expo-router';
+import { getCurrentUser, signOut } from '@/lib/auth';
 
 export default function SettingsScreen() {
+  const router = useRouter();
   const tint = useThemeColor({}, 'tint');
-  const [settings, setSettings] = useState<HabitSettings>({ enabled: true, hour: 20 });
-  const [loading, setLoading] = useState(true);
-  const [privacy, setPrivacy] = useState<PrivacySettings>({ privateMode: false });
+  const text = useThemeColor({}, 'text');
+
+  const [enabled, setEnabled] = useState(false);
+  const [hour, setHour] = useState(20);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [privateMode, setPrivateMode] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
-      setSettings(await getHabitSettings());
-      setPrivacy(await getPrivacySettings());
-      setLoading(false);
+      const hs = await getHabitSettings();
+      setEnabled(!!hs.enabled);
+      setHour(hs.hour ?? 20);
+      const ps = await getPrivacySettings();
+      setPrivateMode(!!ps.privateMode);
+      const u = await getCurrentUser();
+      setUserEmail(u?.email ?? null);
     })();
   }, []);
 
-  const save = async (next: HabitSettings) => {
-    setSettings(next);
-    await setHabitSettings(next);
-    try {
-      const ok = await ensureNotificationPermissions();
-      if (ok && next.enabled) await scheduleDailyHabitReminder(next.hour);
-    } catch {}
+  const togglePrivateMode = async (val: boolean) => {
+    setPrivateMode(val);
+    await setPrivacySettings({ privateMode: val });
+    Alert.alert('Đã lưu', val ? 'Bật chế độ riêng tư' : 'Tắt chế độ riêng tư');
   };
 
-  if (loading) return <ThemedView style={styles.container}><ThemedText>Đang tải…</ThemedText></ThemedView>;
+  const toggleHabit = async (val: boolean) => {
+    setEnabled(val);
+    await setHabitSettings({ enabled: val, hour });
+    if (val) {
+      try { await scheduleDailyHabitReminder(hour); } catch {}
+      Alert.alert('Đã bật nhắc nhở', `Hàng ngày lúc ${hour}:00`);
+    } else {
+      Alert.alert('Đã tắt nhắc nhở');
+    }
+  };
+
+  const onChangeTime = async (_: any, selected?: Date) => {
+    setShowTimePicker(false);
+    if (selected) {
+      const newHour = selected.getHours();
+      setHour(newHour);
+      await setHabitSettings({ enabled, hour: newHour });
+      if (enabled) {
+        try { await scheduleDailyHabitReminder(newHour); } catch {}
+      }
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      router.replace('/auth');
+    } catch (e: any) {
+      Alert.alert('Lỗi', e?.message || 'Không thể đăng xuất');
+    }
+  };
 
   return (
     <ThemedView style={styles.container}>
-      <ThemedText type="title" style={styles.title}>Cài đặt</ThemedText>
+      <ThemedText type="title" style={{ marginBottom: 12 }}>Cài đặt</ThemedText>
 
-      <ThemedText style={{ marginBottom: 8 }}>Nhắc ghi chi tiêu hằng ngày</ThemedText>
-      <View style={styles.row}>
-        <Pressable
-          style={[styles.toggle, { backgroundColor: settings.enabled ? tint : '#ccc' }]}
-          onPress={() => save({ ...settings, enabled: !settings.enabled })}
-        >
-          <ThemedText style={{ color: '#fff' }}>{settings.enabled ? 'Bật' : 'Tắt'}</ThemedText>
-        </Pressable>
-      </View>
+      {/* Account */}
+      <ThemedView style={styles.card}>
+        <ThemedText type="subtitle" style={{ marginBottom: 8 }}>Tài khoản</ThemedText>
+        <ThemedText style={{ opacity: 0.8, marginBottom: 8 }}>{userEmail || 'Chưa đăng nhập'}</ThemedText>
+        {userEmail ? (
+          <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={handleSignOut}>
+            <ThemedText style={styles.buttonText}>Đăng xuất</ThemedText>
+          </Pressable>
+        ) : (
+          <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={() => router.push('/auth')}>
+            <ThemedText style={styles.buttonText}>Đăng nhập</ThemedText>
+          </Pressable>
+        )}
+      </ThemedView>
 
-      <ThemedText style={{ marginTop: 16, marginBottom: 8 }}>Giờ nhắc (0–23)</ThemedText>
-      <View style={styles.row}>
-        <Pressable style={[styles.hourBtn, { borderColor: tint }]} onPress={() => save({ ...settings, hour: Math.max(0, settings.hour - 1) })}>
-          <ThemedText style={{ color: tint }}>-</ThemedText>
+      {/* Family */}
+      <ThemedView style={styles.card}>
+        <ThemedText type="subtitle" style={{ marginBottom: 8 }}>Gia đình</ThemedText>
+        <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={() => router.push('/family' as any)}>
+          <ThemedText style={styles.buttonText}>Quản lý Gia đình</ThemedText>
         </Pressable>
-        <ThemedText style={styles.hourText}>{settings.hour}:00</ThemedText>
-        <Pressable style={[styles.hourBtn, { borderColor: tint }]} onPress={() => save({ ...settings, hour: Math.min(23, settings.hour + 1) })}>
-          <ThemedText style={{ color: tint }}>+</ThemedText>
-        </Pressable>
-      </View>
-      <ThemedText style={{ opacity: 0.7, marginTop: 8 }}>Thông báo lặp lại mỗi ngày vào giờ đã chọn.</ThemedText>
+      </ThemedView>
 
-      <ThemedText type="title" style={[styles.title, { marginTop: 24 }]}>Quyền riêng tư</ThemedText>
-      <ThemedText style={{ marginBottom: 8 }}>Chế độ riêng tư (giao dịch mới của bạn mặc định ẩn chi tiết với người khác)</ThemedText>
-      <View style={styles.row}>
-        <Pressable
-          style={[styles.toggle, { backgroundColor: privacy.privateMode ? tint : '#ccc' }]}
-          onPress={async () => {
-            const next = { privateMode: !privacy.privateMode };
-            setPrivacy(next);
-            await setPrivacySettings(next);
-          }}
-        >
-          <ThemedText style={{ color: '#fff' }}>{privacy.privateMode ? 'Bật' : 'Tắt'}</ThemedText>
-        </Pressable>
-      </View>
+      {/* Privacy */}
+      <ThemedView style={styles.card}>
+        <ThemedText type="subtitle" style={{ marginBottom: 8 }}>Quyền riêng tư</ThemedText>
+        <ThemedView style={styles.row}>
+          <ThemedText>Chế độ riêng tư</ThemedText>
+          <Switch value={privateMode} onValueChange={togglePrivateMode} trackColor={{ true: tint }} />
+        </ThemedView>
+        <ThemedText style={{ opacity: 0.6, marginTop: 6, fontSize: 12 }}>
+          Khi bật, các giao dịch mới mặc định là riêng tư (chỉ bạn thấy chi tiết).
+        </ThemedText>
+      </ThemedView>
+
+      {/* Habit reminders */}
+      <ThemedView style={styles.card}>
+        <ThemedText type="subtitle" style={{ marginBottom: 8 }}>Nhắc nhở thói quen</ThemedText>
+        <ThemedView style={styles.row}>
+          <ThemedText>Bật nhắc nhở hàng ngày</ThemedText>
+          <Switch value={enabled} onValueChange={toggleHabit} trackColor={{ true: tint }} />
+        </ThemedView>
+        <ThemedView style={[styles.row, { marginTop: 8 }]}> 
+          <ThemedText>Giờ nhắc</ThemedText>
+          <Pressable style={[styles.outlineBtn, { borderColor: tint }]} onPress={() => setShowTimePicker(true)}>
+            <ThemedText style={{ color: tint, fontWeight: '700' }}>{hour}:00</ThemedText>
+          </Pressable>
+        </ThemedView>
+        {showTimePicker && (
+          <DateTimePicker
+            value={new Date(2020, 0, 1, hour, 0)}
+            mode="time"
+            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+            onChange={onChangeTime}
+          />
+        )}
+      </ThemedView>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
-  title: { marginBottom: 12 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  toggle: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10 },
-  hourBtn: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1 },
-  hourText: { fontSize: 18, fontWeight: '600', minWidth: 80, textAlign: 'center' },
-});
+  card: { padding: 16, borderRadius: 12, marginBottom: 16 },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  button: { paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
+  buttonText: { color: '#fff', fontWeight: '700' },
+  outlineBtn: { paddingVertical: 6, paddingHorizontal: 12, borderWidth: 1, borderRadius: 8 },
+})
 
 

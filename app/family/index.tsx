@@ -1,0 +1,286 @@
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, ScrollView, Pressable, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { ThemedView } from '@/components/themed-view';
+import { ThemedText } from '@/components/themed-text';
+import { useThemeColor } from '@/hooks/use-theme-color';
+import { useRouter } from 'expo-router';
+import {
+  getUserHouseholds,
+  createHousehold,
+  getHouseholdMembers,
+  createHouseholdInvite,
+  type Household,
+  type HouseholdMember,
+} from '@/lib/database';
+import { getCurrentUser } from '@/lib/auth';
+import { getCurrentHouseholdId, setCurrentHouseholdId } from '@/lib/family';
+import QRCode from 'react-native-qrcode-svg';
+import * as Clipboard from 'expo-clipboard';
+
+export default function FamilyScreen() {
+  const router = useRouter();
+  const tint = useThemeColor({}, 'tint');
+  const text = useThemeColor({}, 'text');
+  const bg = useThemeColor({}, 'background');
+
+  const [loading, setLoading] = useState(true);
+  const [households, setHouseholds] = useState<Household[]>([]);
+  const [currentHouseholdId, setCurrentHouseholdIdState] = useState<string | null>(null);
+  const [members, setMembers] = useState<HouseholdMember[]>([]);
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newHouseholdName, setNewHouseholdName] = useState('');
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const user = await getCurrentUser();
+      if (!user) {
+        router.replace('/auth');
+        return;
+      }
+
+      const hhList = await getUserHouseholds(user.id);
+      setHouseholds(hhList);
+
+      const currentId = await getCurrentHouseholdId();
+      setCurrentHouseholdIdState(currentId);
+
+      if (currentId) {
+        const membersList = await getHouseholdMembers(currentId);
+        setMembers(membersList);
+      }
+    } catch (e: any) {
+      Alert.alert('Lỗi', e?.message || 'Không thể tải dữ liệu');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateHousehold = async () => {
+    if (!newHouseholdName.trim()) {
+      Alert.alert('Tên gia đình không được để trống');
+      return;
+    }
+
+    try {
+      const user = await getCurrentUser();
+      if (!user) return;
+
+      const newId = await createHousehold(newHouseholdName.trim(), user.id);
+      await setCurrentHouseholdId(newId);
+      setShowCreateForm(false);
+      setNewHouseholdName('');
+      loadData();
+      Alert.alert('Thành công', 'Đã tạo gia đình mới!');
+    } catch (e: any) {
+      Alert.alert('Lỗi', e?.message || 'Không thể tạo gia đình');
+    }
+  };
+
+  const handleSelectHousehold = async (id: string) => {
+    await setCurrentHouseholdId(id);
+    setCurrentHouseholdIdState(id);
+    loadData();
+  };
+
+  const handleGenerateInvite = async () => {
+    if (!currentHouseholdId) {
+      Alert.alert('Chưa chọn gia đình');
+      return;
+    }
+
+    try {
+      const invite = await createHouseholdInvite(currentHouseholdId);
+      setInviteUrl(invite.url);
+    } catch (e: any) {
+      Alert.alert('Lỗi', e?.message || 'Không thể tạo link mời');
+    }
+  };
+
+  const handleCopyInviteUrl = async () => {
+    if (inviteUrl) {
+      await Clipboard.setStringAsync(inviteUrl);
+      Alert.alert('Đã sao chép link mời!');
+    }
+  };
+
+  if (loading) {
+    return (
+      <ThemedView style={styles.container}>
+        <ActivityIndicator size="large" color={tint} />
+      </ThemedView>
+    );
+  }
+
+  const currentHousehold = households.find((h) => h.id === currentHouseholdId);
+
+  return (
+    <ScrollView contentContainerStyle={{ padding: 16 }}>
+      <ThemedView style={{ gap: 16 }}>
+        <ThemedText type="title">Quản lý Gia đình</ThemedText>
+
+        {/* Danh sách households */}
+        <ThemedView style={[styles.card, { backgroundColor: bg }]}>
+          <ThemedText type="subtitle" style={{ marginBottom: 8 }}>
+            Gia đình của bạn
+          </ThemedText>
+          {households.length === 0 ? (
+            <ThemedText style={{ opacity: 0.7 }}>Chưa có gia đình nào</ThemedText>
+          ) : (
+            households.map((hh) => (
+              <Pressable
+                key={hh.id}
+                style={[
+                  styles.householdItem,
+                  { borderColor: hh.id === currentHouseholdId ? tint : text + '30' },
+                ]}
+                onPress={() => handleSelectHousehold(hh.id)}
+              >
+                <ThemedText style={{ fontWeight: hh.id === currentHouseholdId ? '700' : '400' }}>
+                  {hh.name}
+                </ThemedText>
+                {hh.id === currentHouseholdId && (
+                  <ThemedText style={{ color: tint, fontSize: 12 }}>✓ Đang chọn</ThemedText>
+                )}
+              </Pressable>
+            ))
+          )}
+        </ThemedView>
+
+        {/* Tạo gia đình mới */}
+        {!showCreateForm ? (
+          <Pressable
+            style={[styles.button, { backgroundColor: tint }]}
+            onPress={() => setShowCreateForm(true)}
+          >
+            <ThemedText style={{ color: '#fff', fontWeight: '700' }}>+ Tạo gia đình mới</ThemedText>
+          </Pressable>
+        ) : (
+          <ThemedView style={[styles.card, { backgroundColor: bg }]}>
+            <ThemedText type="subtitle" style={{ marginBottom: 8 }}>
+              Tạo gia đình mới
+            </ThemedText>
+            <TextInput
+              style={[styles.input, { borderColor: tint + '30', color: text }]}
+              placeholder="Tên gia đình (vd: Gia đình Nguyễn)"
+              placeholderTextColor={text + '60'}
+              value={newHouseholdName}
+              onChangeText={setNewHouseholdName}
+            />
+            <ThemedView style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+              <Pressable
+                style={[styles.button, { backgroundColor: tint, flex: 1 }]}
+                onPress={handleCreateHousehold}
+              >
+                <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Tạo</ThemedText>
+              </Pressable>
+              <Pressable
+                style={[styles.button, { backgroundColor: text + '20', flex: 1 }]}
+                onPress={() => {
+                  setShowCreateForm(false);
+                  setNewHouseholdName('');
+                }}
+              >
+                <ThemedText style={{ fontWeight: '700' }}>Hủy</ThemedText>
+              </Pressable>
+            </ThemedView>
+          </ThemedView>
+        )}
+
+        {/* Thông tin gia đình hiện tại */}
+        {currentHousehold && (
+          <>
+            <ThemedView style={[styles.card, { backgroundColor: bg }]}>
+              <ThemedText type="subtitle" style={{ marginBottom: 8 }}>
+                {currentHousehold.name}
+              </ThemedText>
+              <ThemedText style={{ opacity: 0.7, marginBottom: 12 }}>
+                Thành viên: {members.length}
+              </ThemedText>
+              {members.map((m) => (
+                <ThemedView key={m.id} style={styles.memberItem}>
+                  <ThemedText>
+                    {m.user_id.slice(0, 8)}... ({m.role})
+                  </ThemedText>
+                </ThemedView>
+              ))}
+            </ThemedView>
+
+            {/* Tham gia bằng QR */}
+            <ThemedView style={[styles.card, { backgroundColor: bg }]}>
+              <ThemedText type="subtitle" style={{ marginBottom: 8 }}>
+                Tham gia gia đình bằng QR
+              </ThemedText>
+              <Pressable
+                style={[styles.button, { backgroundColor: tint }]}
+                onPress={() => router.push('/family/scan' as any)}
+              >
+                <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Quét mã tham gia</ThemedText>
+              </Pressable>
+            </ThemedView>
+
+            {/* Mời thành viên */}
+            <ThemedView style={[styles.card, { backgroundColor: bg }]}>
+              <ThemedText type="subtitle" style={{ marginBottom: 8 }}>
+                Mời thành viên
+              </ThemedText>
+              {!inviteUrl ? (
+                <Pressable
+                  style={[styles.button, { backgroundColor: tint }]}
+                  onPress={handleGenerateInvite}
+                >
+                  <ThemedText style={{ color: '#fff', fontWeight: '700' }}>
+                    Tạo mã QR mời
+                  </ThemedText>
+                </Pressable>
+              ) : (
+                <ThemedView style={{ alignItems: 'center', gap: 12 }}>
+                  <QRCode value={inviteUrl} size={200} backgroundColor="white" />
+                  <Pressable
+                    style={[styles.button, { backgroundColor: tint }]}
+                    onPress={handleCopyInviteUrl}
+                  >
+                    <ThemedText style={{ color: '#fff', fontWeight: '700' }}>
+                      Sao chép link
+                    </ThemedText>
+                  </Pressable>
+                  <Pressable onPress={() => setInviteUrl(null)}>
+                    <ThemedText style={{ color: tint, fontSize: 14 }}>Đóng</ThemedText>
+                  </Pressable>
+                </ThemedView>
+              )}
+            </ThemedView>
+          </>
+        )}
+      </ThemedView>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  card: { padding: 16, borderRadius: 12, gap: 8 },
+  householdItem: {
+    padding: 12,
+    borderWidth: 2,
+    borderRadius: 8,
+    marginBottom: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  memberItem: { paddingVertical: 6 },
+  input: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  button: { paddingVertical: 14, borderRadius: 10, alignItems: 'center' },
+});
+

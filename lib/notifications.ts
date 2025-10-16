@@ -59,6 +59,17 @@ export async function setupAndroidChannels() {
   });
 }
 
+export async function cancelHabitReminders() {
+  try {
+    const all = await Notifications.getAllScheduledNotificationsAsync();
+    await Promise.all(
+      (all || [])
+        .filter((n) => n.content?.title === 'Đừng quên ghi chi tiêu hôm nay')
+        .map((n) => Notifications.cancelScheduledNotificationAsync((n as any).identifier))
+    );
+  } catch {}
+}
+
 export async function scheduleDailyHabitReminder(hour = 20) {
   try {
     // Avoid duplicates: cancel any existing habit reminders
