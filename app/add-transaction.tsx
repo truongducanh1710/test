@@ -20,6 +20,8 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { database, getTodayDateString } from '@/lib/database';
+import { getPrivacySettings } from '@/lib/settings';
+import { getCurrentUser } from '@/lib/auth';
 import { logDailyProgress } from '@/lib/gamification';
 import { 
   TransactionFormData, 
@@ -220,6 +222,7 @@ export default function AddTransactionScreen() {
     try {
       setLoading(true);
       await database.init();
+      const [privacy, user] = await Promise.all([getPrivacySettings(), getCurrentUser()]);
 
       const transactionData = {
         amount: parseFloat(formData.amount),
@@ -228,6 +231,9 @@ export default function AddTransactionScreen() {
         date: formData.date,
         type: formData.type,
         source: 'manual' as const,
+        is_private: !!privacy.privateMode,
+        owner_user_id: user?.id || null,
+        household_id: null as any,
       };
 
       let newId: string | undefined;
