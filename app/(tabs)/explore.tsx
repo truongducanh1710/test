@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ScrollView, StyleSheet, Pressable, Dimensions, Alert, ActivityIndicator, Modal } from 'react-native';
+import { ScrollView, StyleSheet, Pressable, Dimensions, Alert, ActivityIndicator, Modal, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -78,6 +78,11 @@ export default function FinanceScreen() {
     const { start, end } = getRangeDates(key, base);
     return `${key}:${start}_${end}`;
   };
+
+  // Small skeleton helpers (per-section placeholders)
+  const SkeletonLine = ({ h = 12, w = '100%', r = 6, style = {} as any }) => (
+    <View style={[{ height: h, width: w as any, borderRadius: r, backgroundColor: dividerColor }, style]} />
+  );
 
   // Load base data once; hydrate from module cache; prefetch in background
   useFocusEffect(
@@ -287,14 +292,8 @@ export default function FinanceScreen() {
 
   
 
-  if (loading) {
-    return (
-      <ThemedView style={[styles.container, { backgroundColor }]}>
-        <ActivityIndicator size="large" color={tintColor} style={styles.loader} />
-        <ThemedText style={styles.loadingText}>Đang tải dữ liệu tài chính...</ThemedText>
-      </ThemedView>
-    );
-  }
+  // Remove full-screen spinner. Always render the screen; use per-card skeletons instead
+  // if (loading) { ... } -- deleted
 
   return (
     <ScrollView style={[styles.container, { backgroundColor }]} showsVerticalScrollIndicator={false}>
@@ -311,9 +310,13 @@ export default function FinanceScreen() {
           <ThemedText style={styles.headerSubtitle}>
            {new Date().toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })}
           </ThemedText>
-          <ThemedText style={styles.balanceText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
-            {formatCurrency(currentMonthSummary.balance)}
-          </ThemedText>
+          {(!financeSummaryCache && loading) ? (
+            <SkeletonLine h={28} w={160} r={8} style={{ marginBottom: 5 }} />
+          ) : (
+            <ThemedText style={styles.balanceText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+              {formatCurrency(currentMonthSummary.balance)}
+            </ThemedText>
+          )}
           <ThemedText style={styles.balanceLabel}>Số Dư Hiện Tại</ThemedText>
         </ThemedView>
       </LinearGradient>
@@ -322,91 +325,115 @@ export default function FinanceScreen() {
       <ThemedView style={styles.summaryContainer}>
         <ThemedView style={[styles.summaryCard, { backgroundColor: '#22c55e' }]}>
           <Ionicons name="arrow-up" size={24} color="white" />
-          <ThemedText style={styles.summaryAmount}>{formatCurrency(currentMonthSummary.totalIncome)}</ThemedText>
+          {(!financeSummaryCache && loading) ? (
+            <SkeletonLine h={16} w={120} r={6} style={{ marginVertical: 5 }} />
+          ) : (
+            <ThemedText style={styles.summaryAmount}>{formatCurrency(currentMonthSummary.totalIncome)}</ThemedText>
+          )}
           <ThemedText style={styles.summaryLabel}>Thu Nhập Tháng Này</ThemedText>
         </ThemedView>
         <ThemedView style={[styles.summaryCard, { backgroundColor: '#ef4444' }]}>
           <Ionicons name="arrow-down" size={24} color="white" />
-          <ThemedText style={styles.summaryAmount}>{formatCurrency(currentMonthSummary.totalExpense)}</ThemedText>
+          {(!financeSummaryCache && loading) ? (
+            <SkeletonLine h={16} w={120} r={6} style={{ marginVertical: 5 }} />
+          ) : (
+            <ThemedText style={styles.summaryAmount}>{formatCurrency(currentMonthSummary.totalExpense)}</ThemedText>
+          )}
           <ThemedText style={styles.summaryLabel}>Chi Tiêu Tháng Này</ThemedText>
         </ThemedView>
       </ThemedView>
 
-      {/* Budget Card (moved below summary) */}
+      {/* Budget Card */}
       <ThemedView style={[styles.categoriesContainer, { backgroundColor: cardBg }]}> 
         <ThemedText type="title" style={styles.sectionTitle}>Ngân Sách</ThemedText>
-        <ThemedText style={{ opacity: 0.8, marginBottom: 8 }}>Thu nhập tháng này: {formatCurrency(incomeThisMonth)}</ThemedText>
-        <ThemedText style={{ opacity: 0.6, marginBottom: 12 }}>Ngân sách = % × Thu nhập tháng này</ThemedText>
-        {!budget ? (
-          <Pressable style={[styles.rangeSelector, { borderColor: tintColor + '60' }]} onPress={handleBudgetManagement}>
-            <ThemedText style={[styles.rangeSelectorText, { color: tintColor }]}>Thiết lập ngân sách</ThemedText>
-            <Ionicons name="chevron-forward" size={18} color={tintColor} />
-          </Pressable>
-        ) : walletProgress.length > 0 ? (
-          walletProgress.map(w => {
-            const vnName = w.name === 'Essentials' ? 'Thiết yếu' : w.name === 'Savings' ? 'Tiết kiệm' : w.name === 'Education' ? 'Học tập' : w.name === 'Lifestyle' ? 'Lối sống' : w.name;
-            const cats = walletCategories.get(w.id) || [];
-            const barColor = w.usedPct < 80 ? tintColor : w.usedPct <= 100 ? '#f59e0b' : '#ef4444';
-            const statusLabel = w.usedPct > 100 ? 'Vượt' : w.usedPct >= 80 ? 'Gần ngưỡng' : 'Ổn định';
-            const statusColor = w.usedPct > 100 ? '#ef4444' : w.usedPct >= 80 ? '#f59e0b' : '#22c55e';
-            const isExpanded = expandedWallets.has(w.id);
-            
-            return (
-              <ThemedView key={w.id} style={styles.walletCard}>
-                {/* Wallet Header - Compact */}
-                <ThemedView style={styles.walletTitleRow}>
-                  <ThemedText style={styles.walletName}>{vnName}</ThemedText>
-                  <ThemedView style={[styles.statusChip, { backgroundColor: statusColor + '20', borderColor: statusColor }]}>
-                    <ThemedText style={[styles.statusChipText, { color: statusColor }]}>{statusLabel}</ThemedText>
-                  </ThemedView>
-                </ThemedView>
-
-                {/* Amount & Progress in one line */}
-                <ThemedView style={styles.walletProgressRow}>
-                  <ThemedText style={styles.walletAmountCompact}>
-                    {formatCurrency(w.spend)} / {formatCurrency(w.limit)}
-                  </ThemedText>
-                  <ThemedText style={[styles.walletPercentage, { color: barColor }]}>
-                    {w.usedPct.toFixed(0)}%
-                  </ThemedText>
-                </ThemedView>
-
-                {/* Progress Bar */}
-                <ThemedView style={[styles.walletProgressBar, { backgroundColor: dividerColor }]}>
-                  <ThemedView 
-                    style={[styles.walletProgressFill, { width: `${Math.min(100, w.usedPct)}%`, backgroundColor: barColor }]} 
-                  />
-                </ThemedView>
-
-                {/* Categories - Compact */}
-                {cats.length > 0 && (
-                  <ThemedView style={styles.categoryChipsContainer}>
-                    {(isExpanded ? cats : cats.slice(0, 4)).map((cat, idx) => (
-                      <ThemedView key={idx} style={[styles.categoryChip, { backgroundColor: tintColor + '15', borderColor: tintColor + '40' }]}>
-                        <ThemedText style={[styles.categoryChipText, { color: tintColor }]}>{cat}</ThemedText>
+        {budgetLoading && !financeBudgetCache ? (
+          <>
+            <SkeletonLine h={12} w={180} />
+            <View style={{ height: 8 }} />
+            {[1,2,3].map(i => (
+              <View key={i} style={{ marginBottom: 10 }}>
+                <SkeletonLine h={12} w={'60%'} />
+                <View style={{ height: 8 }} />
+                <SkeletonLine h={8} w={'100%'} r={4} />
+              </View>
+            ))}
+          </>
+        ) : (
+          <>
+            <ThemedText style={{ opacity: 0.8, marginBottom: 8 }}>Thu nhập tháng này: {formatCurrency(incomeThisMonth)}</ThemedText>
+            <ThemedText style={{ opacity: 0.6, marginBottom: 12 }}>Ngân sách = % × Thu nhập tháng này</ThemedText>
+            {!budget ? (
+              <Pressable style={[styles.rangeSelector, { borderColor: tintColor + '60' }]} onPress={handleBudgetManagement}>
+                <ThemedText style={[styles.rangeSelectorText, { color: tintColor }]}>Thiết lập ngân sách</ThemedText>
+                <Ionicons name="chevron-forward" size={18} color={tintColor} />
+              </Pressable>
+            ) : walletProgress.length > 0 ? (
+              walletProgress.map(w => {
+                const vnName = w.name === 'Essentials' ? 'Thiết yếu' : w.name === 'Savings' ? 'Tiết kiệm' : w.name === 'Education' ? 'Học tập' : w.name === 'Lifestyle' ? 'Lối sống' : w.name;
+                const cats = walletCategories.get(w.id) || [];
+                const barColor = w.usedPct < 80 ? tintColor : w.usedPct <= 100 ? '#f59e0b' : '#ef4444';
+                const statusLabel = w.usedPct > 100 ? 'Vượt' : w.usedPct >= 80 ? 'Gần ngưỡng' : 'Ổn định';
+                const statusColor = w.usedPct > 100 ? '#ef4444' : w.usedPct >= 80 ? '#f59e0b' : '#22c55e';
+                const isExpanded = expandedWallets.has(w.id);
+                
+                return (
+                  <ThemedView key={w.id} style={styles.walletCard}>
+                    {/* Wallet Header - Compact */}
+                    <ThemedView style={styles.walletTitleRow}>
+                      <ThemedText style={styles.walletName}>{vnName}</ThemedText>
+                      <ThemedView style={[styles.statusChip, { backgroundColor: statusColor + '20', borderColor: statusColor }]}>
+                        <ThemedText style={[styles.statusChipText, { color: statusColor }]}>{statusLabel}</ThemedText>
                       </ThemedView>
-                    ))}
-                    {cats.length > 4 && (
-                      <Pressable onPress={() => {
-                        const newSet = new Set(expandedWallets);
-                        if (isExpanded) newSet.delete(w.id);
-                        else newSet.add(w.id);
-                        setExpandedWallets(newSet);
-                      }}>
-                        <ThemedView style={[styles.categoryChip, { backgroundColor: tintColor + '25', borderColor: tintColor }]}>
-                          <ThemedText style={[styles.categoryChipText, { color: tintColor, fontWeight: '600' }]}>
-                            {isExpanded ? 'Thu gọn' : `+${cats.length - 4}`}
-                          </ThemedText>
-                        </ThemedView>
-                      </Pressable>
+                    </ThemedView>
+
+                    {/* Amount & Progress in one line */}
+                    <ThemedView style={styles.walletProgressRow}>
+                      <ThemedText style={styles.walletAmountCompact}>
+                        {formatCurrency(w.spend)} / {formatCurrency(w.limit)}
+                      </ThemedText>
+                      <ThemedText style={[styles.walletPercentage, { color: barColor }]}>
+                        {w.usedPct.toFixed(0)}%
+                      </ThemedText>
+                    </ThemedView>
+
+                    {/* Progress Bar */}
+                    <ThemedView style={[styles.walletProgressBar, { backgroundColor: dividerColor }]}>
+                      <ThemedView 
+                        style={[styles.walletProgressFill, { width: `${Math.min(100, w.usedPct)}%`, backgroundColor: barColor }]} 
+                      />
+                    </ThemedView>
+
+                    {/* Categories - Compact */}
+                    {cats.length > 0 && (
+                      <ThemedView style={styles.categoryChipsContainer}>
+                        {(isExpanded ? cats : cats.slice(0, 4)).map((cat, idx) => (
+                          <ThemedView key={idx} style={[styles.categoryChip, { backgroundColor: tintColor + '15', borderColor: tintColor + '40' }]}>
+                            <ThemedText style={[styles.categoryChipText, { color: tintColor }]}>{cat}</ThemedText>
+                          </ThemedView>
+                        ))}
+                        {cats.length > 4 && (
+                          <Pressable onPress={() => {
+                            const newSet = new Set(expandedWallets);
+                            if (isExpanded) newSet.delete(w.id);
+                            else newSet.add(w.id);
+                            setExpandedWallets(newSet);
+                          }}>
+                            <ThemedView style={[styles.categoryChip, { backgroundColor: tintColor + '25', borderColor: tintColor }]}>
+                              <ThemedText style={[styles.categoryChipText, { color: tintColor, fontWeight: '600' }]}>
+                                {isExpanded ? 'Thu gọn' : `+${cats.length - 4}`}
+                              </ThemedText>
+                            </ThemedView>
+                          </Pressable>
+                        )}
+                      </ThemedView>
                     )}
                   </ThemedView>
-                )}
-              </ThemedView>
-            );
-          })
-        ) : (
-          <ThemedText style={{ opacity: 0.7 }}>{budgetLoading ? 'Đang tải...' : 'Không có dữ liệu'}</ThemedText>
+                );
+              })
+            ) : (
+              <ThemedText style={{ opacity: 0.7 }}>{budgetLoading ? 'Đang tải...' : 'Không có dữ liệu'}</ThemedText>
+            )}
+          </>
         )}
       </ThemedView>
 
@@ -414,44 +441,65 @@ export default function FinanceScreen() {
       <ThemedView style={[styles.categoriesContainer, { backgroundColor: cardBg }]}> 
         <ThemedText type="title" style={styles.sectionTitle}>Danh Mục Chi Tiêu Hàng Đầu</ThemedText>
         <Pressable style={[styles.rangeSelector, { borderColor: tintColor + '60' }]} onPress={() => setShowRangeModal(true)}>
-          <ThemedText style={[styles.rangeSelectorText, { color: tintColor }]}>
+          <ThemedText style={[styles.rangeSelectorText, { color: tintColor }]}> 
             {range === 'week' ? 'Tuần này' : range === 'thisMonth' ? 'Tháng này' : 'Tháng trước'}
           </ThemedText>
           <Ionicons name="chevron-down" size={18} color={tintColor} />
         </Pressable>
-        {topCategories.length > 0 ? topCategories.map((category) => (
-            <ThemedView key={category.category} style={styles.categoryItem}>
-              <ThemedView style={styles.categoryInfo}>
-                <ThemedText style={styles.categoryName}>{category.category}</ThemedText>
-                <ThemedText style={styles.categoryAmount}>
-                  {formatCurrency(category.total)}
-                </ThemedText>
-              </ThemedView>
-              <ThemedView style={[styles.categoryBar, { backgroundColor: dividerColor }]}> 
-                <ThemedView 
-                  style={[
-                    styles.categoryBarFill, 
-                    { 
-                      width: `${category.percentage}%`,
-                      backgroundColor: tintColor 
-                    }
-                  ]} 
-                />
-              </ThemedView>
-              <ThemedText style={styles.categoryPercentage}>
-                {category.percentage.toFixed(1)}%
+        {loadingTop ? (
+          [1,2,3,4,5].map(i => (
+            <View key={i} style={styles.categoryItem}>
+              <View style={styles.categoryInfo}>
+                <SkeletonLine h={14} w={'40%'} />
+                <View style={{ height: 6 }} />
+                <SkeletonLine h={12} w={'30%'} />
+              </View>
+              <SkeletonLine h={6} w={'50%'} r={3} />
+              <SkeletonLine h={12} w={35} r={6} />
+            </View>
+          ))
+        ) : topCategories.length > 0 ? topCategories.map((category) => (
+          <ThemedView key={category.category} style={styles.categoryItem}>
+            <ThemedView style={styles.categoryInfo}>
+              <ThemedText style={styles.categoryName}>{category.category}</ThemedText>
+              <ThemedText style={styles.categoryAmount}>
+                {formatCurrency(category.total)}
               </ThemedText>
             </ThemedView>
-          )) : (
-            <ThemedText style={{ opacity: 0.7 }}>Không có dữ liệu</ThemedText>
-          )}
+            <ThemedView style={[styles.categoryBar, { backgroundColor: dividerColor }]}> 
+              <ThemedView 
+                style={[
+                  styles.categoryBarFill, 
+                  { 
+                    width: `${category.percentage}%`,
+                    backgroundColor: tintColor 
+                  }
+                ]} 
+              />
+            </ThemedView>
+            <ThemedText style={styles.categoryPercentage}>
+              {category.percentage.toFixed(1)}%
+            </ThemedText>
+          </ThemedView>
+        )) : (
+          <ThemedText style={{ opacity: 0.7 }}>Không có dữ liệu</ThemedText>
+        )}
       </ThemedView>
 
       {/* Loans Card (below Top Categories) */}
       <ThemedView style={[styles.categoriesContainer, { backgroundColor: cardBg }]}> 
         <ThemedText type="title" style={styles.sectionTitle}>Vay & Cho vay</ThemedText>
         {loansLoading ? (
-          <ActivityIndicator size="small" color={tintColor} />
+          <>
+            <SkeletonLine h={14} w={'40%'} />
+            <View style={{ height: 8 }} />
+            {[1,2,3].map(i => (
+              <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                <SkeletonLine h={12} w={'50%'} />
+                <SkeletonLine h={12} w={100} />
+              </View>
+            ))}
+          </>
         ) : (
           <>
             <ThemedView style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
@@ -491,7 +539,15 @@ export default function FinanceScreen() {
       <ThemedView style={[styles.categoriesContainer, { backgroundColor: cardBg }]}> 
         <ThemedText type="title" style={styles.sectionTitle}>Mục tiêu</ThemedText>
         {goalsLoading ? (
-          <ActivityIndicator size="small" color={tintColor} />
+          <>
+            {[1,2].map(i => (
+              <View key={i} style={{ marginBottom: 10 }}>
+                <SkeletonLine h={14} w={'50%'} />
+                <View style={{ height: 6 }} />
+                <SkeletonLine h={8} w={'100%'} r={4} />
+              </View>
+            ))}
+          </>
         ) : (
           <>
             {recentGoals.length > 0 ? (
@@ -521,43 +577,59 @@ export default function FinanceScreen() {
       {/* Monthly Trends */}
       <ThemedView style={[styles.trendsContainer, { backgroundColor: cardBg }]}> 
         <ThemedText type="title" style={styles.sectionTitle}>Xu Hướng 6 Tháng Gần Đây</ThemedText>
-        <ThemedView style={styles.trendsChart}>
-          {monthlyData.map((month, index) => {
-            const maxAmount = Math.max(...monthlyData.map(m => Math.max(m.income, m.expense)));
-            const incomeHeight = maxAmount > 0 ? (month.income / maxAmount) * 100 : 0;
-            const expenseHeight = maxAmount > 0 ? (month.expense / maxAmount) * 100 : 0;
-            
-            return (
-              <ThemedView key={index} style={styles.chartMonth}>
-                <ThemedView style={styles.chartBars}>
-                  <ThemedView 
-                    style={[
-                      styles.chartBar,
-                      { height: `${incomeHeight}%`, backgroundColor: '#22c55e' }
-                    ]} 
-                  />
-                  <ThemedView 
-                    style={[
-                      styles.chartBar,
-                      { height: `${expenseHeight}%`, backgroundColor: '#ef4444' }
-                    ]} 
-                  />
-                </ThemedView>
-                <ThemedText style={styles.chartLabel}>{month.month}</ThemedText>
+        {(!financeMonthlyCache && loading) ? (
+          <View style={styles.trendsChart}>
+            {[1,2,3,4,5,6].map(i => (
+              <View key={i} style={styles.chartMonth}>
+                <View style={styles.chartBars}>
+                  <SkeletonLine h={60} w={8} r={4} style={{ marginHorizontal: 1 }} />
+                  <SkeletonLine h={40} w={8} r={4} style={{ marginHorizontal: 1 }} />
+                </View>
+                <SkeletonLine h={10} w={24} r={4} />
+              </View>
+            ))}
+          </View>
+        ) : (
+          <>
+            <ThemedView style={styles.trendsChart}>
+              {monthlyData.map((month, index) => {
+                const maxAmount = Math.max(...monthlyData.map(m => Math.max(m.income, m.expense)));
+                const incomeHeight = maxAmount > 0 ? (month.income / maxAmount) * 100 : 0;
+                const expenseHeight = maxAmount > 0 ? (month.expense / maxAmount) * 100 : 0;
+                
+                return (
+                  <ThemedView key={index} style={styles.chartMonth}>
+                    <ThemedView style={styles.chartBars}>
+                      <ThemedView 
+                        style={[
+                          styles.chartBar,
+                          { height: `${incomeHeight}%`, backgroundColor: '#22c55e' }
+                        ]} 
+                      />
+                      <ThemedView 
+                        style={[
+                          styles.chartBar,
+                          { height: `${expenseHeight}%`, backgroundColor: '#ef4444' }
+                        ]} 
+                      />
+                    </ThemedView>
+                    <ThemedText style={styles.chartLabel}>{month.month}</ThemedText>
+                  </ThemedView>
+                );
+              })}
+            </ThemedView>
+            <ThemedView style={styles.chartLegend}>
+              <ThemedView style={styles.legendItem}>
+                <ThemedView style={[styles.legendColor, { backgroundColor: '#22c55e' }]} />
+                <ThemedText style={styles.legendText}>Thu Nhập</ThemedText>
               </ThemedView>
-            );
-          })}
-        </ThemedView>
-        <ThemedView style={styles.chartLegend}>
-          <ThemedView style={styles.legendItem}>
-            <ThemedView style={[styles.legendColor, { backgroundColor: '#22c55e' }]} />
-            <ThemedText style={styles.legendText}>Thu Nhập</ThemedText>
-          </ThemedView>
-          <ThemedView style={styles.legendItem}>
-            <ThemedView style={[styles.legendColor, { backgroundColor: '#ef4444' }]} />
-            <ThemedText style={styles.legendText}>Chi Tiêu</ThemedText>
-          </ThemedView>
-        </ThemedView>
+              <ThemedView style={styles.legendItem}>
+                <ThemedView style={[styles.legendColor, { backgroundColor: '#ef4444' }]} />
+                <ThemedText style={styles.legendText}>Chi Tiêu</ThemedText>
+              </ThemedView>
+            </ThemedView>
+          </>
+        )}
       </ThemedView>
 
       {/* Financial Tools */}
