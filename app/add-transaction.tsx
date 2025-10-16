@@ -17,7 +17,8 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { database } from '@/lib/database';
+import { database, getTodayDateString } from '@/lib/database';
+import { logDailyProgress } from '@/lib/gamification';
 import { 
   TransactionFormData, 
   TransactionType, 
@@ -129,6 +130,11 @@ export default function AddTransactionScreen() {
           due_date: loanDueDate || null,
         });
       }
+
+      // Habit streak logging: mark today's progress after the first transaction
+      try {
+        await logDailyProgress(getTodayDateString());
+      } catch {}
 
       router.back();
     } catch (error) {

@@ -10,6 +10,7 @@ import { CompactTransactionCard } from '@/components/TransactionCard';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { database, formatCurrency } from '@/lib/database';
+import { ensureNotificationPermissions, scheduleDailyHabitReminder } from '@/lib/notifications';
 import { Transaction, TransactionSummary, CategorySummary } from '@/types/transaction';
 
 const { width } = Dimensions.get('window');
@@ -48,6 +49,14 @@ export default function HomeScreen() {
       setLoading(!(homeSummaryCache && homeRecentCache && homeTopCache));
       // Refresh in background
       loadDashboardData(true);
+
+      // Ensure daily habit reminder is scheduled (non-blocking)
+      (async () => {
+        try {
+          const ok = await ensureNotificationPermissions();
+          if (ok) await scheduleDailyHabitReminder(20);
+        } catch {}
+      })();
     }, [])
   );
 
@@ -191,43 +200,28 @@ export default function HomeScreen() {
             <ThemedText style={[styles.quickActionText, { color: tintColor }]}>Xem Tất Cả</ThemedText>
           </Pressable>
 
-          <Pressable style={[styles.quickActionButton, { borderColor: tintColor + '60' }]}>
-            <Ionicons name="stats-chart" size={24} color={tintColor} />
-            <ThemedText style={[styles.quickActionText, { color: tintColor }]}>Phân Tích</ThemedText>
+          <Pressable 
+            style={[styles.quickActionButton, { borderColor: tintColor + '60' }]} 
+            onPress={() => router.push('/settings')}
+          >
+            <Ionicons name="settings" size={24} color={tintColor} />
+            <ThemedText style={[styles.quickActionText, { color: tintColor }]}>Cài đặt</ThemedText>
           </Pressable>
         </ThemedView>
       </ThemedView>
 
-      {/* Top Categories */}
-      {topCategories.length > 0 && (
-        <ThemedView style={styles.categoriesContainer}>
-          <ThemedText type="title" style={styles.sectionTitle}>Top Categories</ThemedText>
-          {topCategories.map((category, index) => (
-            <ThemedView key={category.category} style={styles.categoryItem}>
-              <ThemedView style={styles.categoryInfo}>
-                <ThemedText style={styles.categoryName}>{category.category}</ThemedText>
-                <ThemedText style={styles.categoryAmount}>
-                  {formatCurrency(category.total)}
-                </ThemedText>
-              </ThemedView>
-              <ThemedView style={styles.categoryBar}>
-                <ThemedView 
-                  style={[
-                    styles.categoryBarFill, 
-                    { 
-                      width: `${category.percentage}%`,
-                      backgroundColor: tintColor 
-                    }
-                  ]} 
-                />
-              </ThemedView>
-              <ThemedText style={styles.categoryPercentage}>
-                {category.percentage.toFixed(1)}%
-              </ThemedText>
-            </ThemedView>
-          ))}
-        </ThemedView>
-      )}
+      {/* Daily Log (Habit Streak) replacing Top Categories */}
+      <ThemedView style={styles.categoriesContainer}>
+        <ThemedText type="title" style={styles.sectionTitle}>Nhật ký chi tiêu</ThemedText>
+        <ThemedText style={{ opacity: 0.8, marginBottom: 8 }}>Ghi ít nhất 1 giao dịch mỗi ngày để duy trì streak.</ThemedText>
+        <Pressable 
+          style={[styles.quickActionButton, { borderColor: tintColor + '60', marginBottom: 8 }]}
+          onPress={() => router.push('/add-transaction')}
+        >
+          <Ionicons name="flash" size={20} color={tintColor} />
+          <ThemedText style={[styles.quickActionText, { color: tintColor }]}>Ghi ngay hôm nay</ThemedText>
+        </Pressable>
+      </ThemedView>
 
       {/* Recent Transactions */}
       {recentTransactions.length > 0 && (

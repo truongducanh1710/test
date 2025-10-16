@@ -59,4 +59,25 @@ export async function setupAndroidChannels() {
   });
 }
 
+export async function scheduleDailyHabitReminder(hour = 20) {
+  try {
+    // Avoid duplicates: cancel any existing habit reminders
+    const all = await Notifications.getAllScheduledNotificationsAsync();
+    await Promise.all(
+      (all || [])
+        .filter((n) => n.content?.title === 'Đừng quên ghi chi tiêu hôm nay')
+        .map((n) => Notifications.cancelScheduledNotificationAsync((n as any).identifier))
+    );
+  } catch {}
+
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: 'Đừng quên ghi chi tiêu hôm nay',
+      body: 'Chỉ một giao dịch để duy trì streak!',
+      data: { action: 'open-add-transaction' },
+    },
+    trigger: { hour, minute: 0, repeats: true } as any,
+  });
+}
+
 
