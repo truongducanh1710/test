@@ -76,6 +76,8 @@ export default function AssistantScreen() {
   const textColor = colorScheme === 'dark' ? '#fff' : '#111';
   const bubbleUser = colorScheme === 'dark' ? '#1f6aa0' : '#e0f2fe';
   const bubbleAI = colorScheme === 'dark' ? '#222' : '#f5f5f5';
+  const stickyBg = colorScheme === 'dark' ? 'rgba(13,15,18,0.9)' : 'rgba(255,255,255,0.9)';
+  const stickyBorder = colorScheme === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
 
   const Quick = ({ label, prompt }: { label: string; prompt: string }) => (
     <TouchableOpacity style={[styles.quickChip, { borderColor: primary }]} onPress={() => send(prompt)}>
@@ -92,12 +94,19 @@ export default function AssistantScreen() {
         )}
       </View>
 
-      <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent}>
-        <View style={styles.quickRow}>
-          <Quick label="Tóm tắt 90 ngày" prompt="Tóm tắt tài chính 90 ngày qua và nêu 3 điểm đáng chú ý." />
-          <Quick label="Tối ưu ngân sách" prompt="Đề xuất cách tối ưu phân bổ ví và cắt giảm 2 danh mục lớn." />
-          <Quick label="Cảnh báo vượt mức" prompt="Danh mục nào có nguy cơ vượt ngân sách sớm?" />
-          <Quick label="Gợi ý tiết kiệm" prompt="Gợi ý 3 biện pháp tiết kiệm phù hợp số liệu của tôi." />
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={styles.scrollContent}
+        stickyHeaderIndices={[0]}
+      >
+        {/* Sticky quick actions */}
+        <View style={{ backgroundColor: stickyBg, paddingBottom: 6, paddingTop: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: stickyBorder }}>
+          <View style={styles.quickRow}>
+            <Quick label="Tóm tắt 90 ngày" prompt="Tóm tắt tài chính 90 ngày qua và nêu 3 điểm đáng chú ý." />
+            <Quick label="Tối ưu ngân sách" prompt="Đề xuất cách tối ưu phân bổ ví và cắt giảm 2 danh mục lớn." />
+            <Quick label="Cảnh báo vượt mức" prompt="Danh mục nào có nguy cơ vượt ngân sách sớm?" />
+            <Quick label="Gợi ý tiết kiệm" prompt="Gợi ý 3 biện pháp tiết kiệm phù hợp số liệu của tôi." />
+          </View>
         </View>
 
         {!messages.length && (
@@ -141,7 +150,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
   header: { gap: 4, marginBottom: 8 },
   badge: { opacity: 0.7 },
-  quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
   quickChip: { borderWidth: 1, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 16 },
   scrollContent: { paddingBottom: 100, gap: 8 },
   msg: { padding: 10, borderRadius: 10, maxWidth: '85%' },

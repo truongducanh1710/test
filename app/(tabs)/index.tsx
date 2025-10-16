@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ScrollView, StyleSheet, Pressable, Dimensions, StatusBar, RefreshControl, ActivityIndicator } from 'react-native';
+import { ScrollView, StyleSheet, Pressable, Dimensions, StatusBar, RefreshControl, ActivityIndicator, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -11,6 +11,7 @@ import { useThemeColor } from '@/hooks/use-theme-color';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { database, formatCurrency } from '@/lib/database';
 import { ensureNotificationPermissions, scheduleDailyHabitReminder } from '@/lib/notifications';
+import { getStreak, getCoins, getTwoWeekCalendarStatus, DayStatus, backfillHabitLogs } from '@/lib/gamification';
 import { Transaction, TransactionSummary, CategorySummary } from '@/types/transaction';
 
 const { width } = Dimensions.get('window');
@@ -31,6 +32,9 @@ export default function HomeScreen() {
   const [topCategories, setTopCategories] = useState<CategorySummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [calendar, setCalendar] = useState<DayStatus[]>([]);
+  const [streakInfo, setStreakInfo] = useState<{ current: number; best: number }>({ current: 0, best: 0 });
+  const [coins, setCoins] = useState(0);
 
   const router = useRouter();
   const backgroundColor = useThemeColor({}, 'background');
@@ -38,6 +42,25 @@ export default function HomeScreen() {
   const recentListBgColor = useThemeColor({ light: '#ffffff', dark: '#1f1f1f' }, 'background');
   const colorScheme = useColorScheme();
   const cameraButtonBg = colorScheme === 'dark' ? '#6366f1' : tintColor;
+
+  const buildTwoWeekPlaceholder = (): DayStatus[] => {
+    const today = new Date();
+    const dow = today.getDay(); // 0 Sun..6 Sat
+    const isoDow = dow === 0 ? 7 : dow;
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - (isoDow - 1));
+    const startPrevWeek = new Date(startOfWeek);
+    startPrevWeek.setDate(startOfWeek.getDate() - 7);
+    const toKey = (d: Date) => new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString().slice(0,10);
+    const todayKey = toKey(today);
+    const days: DayStatus[] = [];
+    for (let i = 0; i < 14; i++) {
+      const d = new Date(startPrevWeek);
+      d.setDate(startPrevWeek.getDate() + i);
+      days.push({ date: toKey(d), day: d.getDate(), isFuture: d > today, done: false, isToday: toKey(d) === todayKey });
+    }
+    return days;
+  };
 
   // Load data when screen focuses
   useFocusEffect(
@@ -55,6 +78,19 @@ export default function HomeScreen() {
         try {
           const ok = await ensureNotificationPermissions();
           if (ok) await scheduleDailyHabitReminder(20);
+        } catch {}
+      })();
+
+      // load habit info in background
+      (async () => {
+        try {
+          // show immediate placeholder to ensure 14 circles render
+          setCalendar(buildTwoWeekPlaceholder());
+          // sync logs from existing transactions (last 90 days) before rendering
+          await backfillHabitLogs(90);
+          setCalendar(await getTwoWeekCalendarStatus());
+          setStreakInfo(await getStreak());
+          setCoins(await getCoins());
         } catch {}
       })();
     }, [])
@@ -117,6 +153,8 @@ export default function HomeScreen() {
       </ThemedView>
     );
   }
+
+  const weekdayLabels = ['T2','T3','T4','T5','T6','T7','CN'];
 
   return (
     <ScrollView 
@@ -214,12 +252,57 @@ export default function HomeScreen() {
       <ThemedView style={styles.categoriesContainer}>
         <ThemedText type="title" style={styles.sectionTitle}>Nhật ký chi tiêu</ThemedText>
         <ThemedText style={{ opacity: 0.8, marginBottom: 8 }}>Ghi ít nhất 1 giao dịch mỗi ngày để duy trì streak.</ThemedText>
+
+        {/* Weekday labels */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+          {weekdayLabels.map((w) => (
+            <ThemedText key={w} style={{ width: 40, textAlign: 'center', opacity: 0.7 }}>{w}</ThemedText>
+          ))}
+        </View>
+
+        {/* 14-day calendar: two rows x 7 days */}
+        <View style={{ gap: 8 }}>
+          {[0, 1].map(row => (
+            <View key={row} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              {calendar.slice(row * 7, row * 7 + 7).map((d) => {
+                const bg = d.isFuture ? '#9ca3af' : (d.done ? '#22c55e' : '#f59e0b');
+                const border = d.isToday ? tintColor : 'transparent';
+                return (
+                  <Pressable
+                    key={d.date}
+                    onPress={() => {
+                      if (d.isFuture) return;
+                      if (d.isToday) router.push('/add-transaction');
+                      else router.push({ pathname: '/transactions', params: { date: d.date } as any });
+                    }}
+                    style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: bg + 'CC', alignItems: 'center', justifyContent: 'center', borderWidth: d.isToday ? 2 : 0, borderColor: border }}
+                  >
+                    <ThemedText style={{ color: '#fff', fontWeight: '700' }}>{d.day}</ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ))}
+        </View>
+
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
+          <ThemedText>Streak: {streakInfo.current} ngày (tốt nhất {streakInfo.best})</ThemedText>
+          <ThemedText>Xu: {coins}</ThemedText>
+        </View>
+
         <Pressable 
-          style={[styles.quickActionButton, { borderColor: tintColor + '60', marginBottom: 8 }]}
+          style={[styles.quickActionButton, { borderColor: tintColor + '60', marginTop: 10 }]} 
           onPress={() => router.push('/add-transaction')}
         >
           <Ionicons name="flash" size={20} color={tintColor} />
           <ThemedText style={[styles.quickActionText, { color: tintColor }]}>Ghi ngay hôm nay</ThemedText>
+        </Pressable>
+        <Pressable 
+          style={[styles.quickActionButton, { borderColor: tintColor + '60', marginTop: 8 }]} 
+          onPress={() => router.push('/habits')}
+        >
+          <Ionicons name="gift" size={20} color={tintColor} />
+          <ThemedText style={[styles.quickActionText, { color: tintColor }]}>Xem chi tiết / Đổi thưởng</ThemedText>
         </Pressable>
       </ThemedView>
 
