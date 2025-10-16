@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   StyleSheet, 
   Pressable, 
@@ -9,15 +9,18 @@ import {
   Platform,
   ActivityIndicator
 } from 'react-native';
+import { Animated, Easing } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { database, getTodayDateString, getCategoryFromDescription } from '@/lib/database';
+import { database, getTodayDateString } from '@/lib/database';
+import { logDailyProgress } from '@/lib/gamification';
 import { 
   TransactionFormData, 
   TransactionType, 
@@ -37,6 +40,9 @@ export default function AddTransactionScreen() {
   const [loanPerson, setLoanPerson] = useState('');
   const [loanDueDate, setLoanDueDate] = useState<string | null>(null);
   const [showDuePicker, setShowDuePicker] = useState(false);
+  const [isParseable, setIsParseable] = useState(false);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
   
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -52,6 +58,81 @@ export default function AddTransactionScreen() {
       loadTransaction(params.id as string);
     }
   }, [params.id]);
+
+  // Simple VN parseability heuristic: contains a number and optional k/tr/triệu/tỷ
+  useEffect(() => {
+    const text = formData.description || '';
+    const numberLike = /(\+|-)?\s*([\d.,]+)\s*(k|nghìn|ngan|tr|triệu|m|ty|tỷ)?/i;
+    setIsParseable(numberLike.test(text));
+  }, [formData.description]);
+
+  useEffect(() => {
+    if (isParseable) {
+      if (!pulseLoop.current) {
+        pulseLoop.current = Animated.loop(
+          Animated.sequence([
+            Animated.timing(pulseAnim, { toValue: 1.08, duration: 500, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+            Animated.timing(pulseAnim, { toValue: 1.0, duration: 500, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+          ])
+        );
+      }
+      pulseLoop.current.start();
+    } else {
+      if (pulseLoop.current) {
+        pulseLoop.current.stop();
+        pulseLoop.current = null;
+      }
+      pulseAnim.setValue(1);
+    }
+  }, [isParseable, pulseAnim]);
+
+  const parseVoiceText = (input: string) => {
+    const text = (input || '').toLowerCase();
+    // amount with unit
+    const match = text.match(/(\+|-)?\s*([\d.,]+)\s*(k|nghìn|ngan|tr|triệu|m|ty|tỷ)?/i);
+    let amountNumber: number | null = null;
+    if (match) {
+      const sign = match[1] === '-' ? -1 : 1;
+      const raw = match[2].replace(/\./g, '').replace(/,/g, '');
+      const unit = (match[3] || '').toLowerCase();
+      let base = parseFloat(raw);
+      if (!isNaN(base)) {
+        if (unit === 'k' || unit === 'nghìn' || unit === 'ngan') base *= 1_000;
+        else if (unit === 'tr' || unit === 'triệu' || unit === 'm') base *= 1_000_000;
+        else if (unit === 'ty' || unit === 'tỷ') base *= 1_000_000_000;
+        amountNumber = Math.round(base * sign);
+      }
+    }
+
+    // type
+    let type: TransactionType | null = null;
+    if (/^(\s|)*-/.test(text) || /(mua|chi|trả|thanhtoan|tt)/i.test(text)) type = 'expense';
+    if (/^(\s|)*\+/.test(text) || /(thu|lương|nhận|bonus|thưởng)/i.test(text)) type = 'income';
+
+    // date
+    let date: string | null = null;
+    const today = new Date();
+    if (/hôm qua|hom qua|yesterday/i.test(text)) {
+      const d = new Date();
+      d.setDate(today.getDate() - 1);
+      date = d.toISOString().split('T')[0];
+    } else if (/hôm nay|hom nay|today/i.test(text)) {
+      date = today.toISOString().split('T')[0];
+    }
+
+    return { amountNumber, type, date };
+  };
+
+  const handleParse = () => {
+    const { amountNumber, type, date } = parseVoiceText(formData.description);
+    if (amountNumber == null && !type && !date) return;
+    setFormData(prev => ({
+      ...prev,
+      amount: amountNumber != null ? Math.abs(amountNumber).toString() : prev.amount,
+      type: type || prev.type,
+      date: date || prev.date,
+    }));
+  };
 
   const loadTransaction = async (id: string) => {
     try {
@@ -83,61 +164,6 @@ export default function AddTransactionScreen() {
 
   const isLoanCategory = () => {
     return (formData.type === 'income' && formData.category === 'Vay') || (formData.type === 'expense' && formData.category === 'Cho vay');
-  };
-
-  // Simple Vietnamese NLP parser for voice-typed description
-  const parseVoiceText = (text: string) => {
-    const result: Partial<TransactionFormData> & { type?: TransactionType } = {};
-    const lower = text.toLowerCase();
-
-    // Type detection
-    if (/\b(thu|nhận|được|bán|lương)\b/.test(lower)) result.type = 'income';
-    if (/\b(chi|tiêu|mua|trả|nạp|đóng)\b/.test(lower)) result.type = 'expense';
-
-    // Amount detection: numbers with k/nghìn/ngàn/tr/triệu or plain digits
-    let amountMatch = lower.match(/(\d+[\.,]?\d*)\s*(k|nghìn|ngàn|tr|triệu)?/);
-    if (amountMatch) {
-      const num = parseFloat(amountMatch[1].replace(/\./g, '').replace(/,/g, '.'));
-      const unit = amountMatch[2];
-      let amount = num;
-      if (unit === 'k' || unit === 'nghìn' || unit === 'ngàn') amount = num * 1000;
-      if (unit === 'tr' || unit === 'triệu') amount = num * 1_000_000;
-      if (amount > 0) result.amount = String(Math.round(amount));
-    }
-
-    // Date detection: hôm nay/hôm qua or dd/mm(/yyyy)
-    if (/hôm nay/.test(lower)) result.date = getTodayDateString();
-    if (/hôm qua/.test(lower)) {
-      const d = new Date(); d.setDate(d.getDate() - 1);
-      result.date = d.toISOString().split('T')[0];
-    }
-    const dm = lower.match(/\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{4}))?\b/);
-    if (dm) {
-      const d = parseInt(dm[1], 10), m = parseInt(dm[2], 10) - 1, y = dm[3] ? parseInt(dm[3], 10) : new Date().getFullYear();
-      const dt = new Date(y, m, d);
-      if (!isNaN(dt.getTime())) result.date = dt.toISOString().split('T')[0];
-    }
-
-    // Category from description
-    const cat = getCategoryFromDescription(text);
-    if (cat) result.category = cat;
-
-    return result;
-  };
-
-  const handleParse = () => {
-    const parsed = parseVoiceText(formData.description || '');
-    if (!parsed || Object.keys(parsed).length === 0) {
-      Alert.alert('Không nhận diện được', 'Hãy nói/gõ ví dụ: "chi 45k cà phê hôm nay"');
-      return;
-    }
-    setFormData(prev => ({
-      amount: parsed.amount ?? prev.amount,
-      description: prev.description,
-      category: parsed.category ?? prev.category,
-      date: parsed.date ?? prev.date,
-      type: parsed.type ?? prev.type,
-    }));
   };
 
   const handleSave = async () => {
@@ -184,6 +210,11 @@ export default function AddTransactionScreen() {
           due_date: loanDueDate || null,
         });
       }
+
+      // Habit streak logging: mark today's progress after the first transaction
+      try {
+        await logDailyProgress(getTodayDateString());
+      } catch {}
 
       router.back();
     } catch (error) {
@@ -282,7 +313,7 @@ export default function AddTransactionScreen() {
         {/* Transaction Type Toggle */}
         <ThemedView style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Loại Giao Dịch</ThemedText>
-          <ThemedView style={[styles.typeToggle, { borderColor: tintColor + '30', backgroundColor: chipBg }]}> 
+          <ThemedView style={[styles.typeToggle, { borderColor: tintColor + '30', backgroundColor: chipBg }]}>
             <Pressable 
               style={[
                 styles.typeButton, 
@@ -331,7 +362,7 @@ export default function AddTransactionScreen() {
         {/* Amount */}
         <ThemedView style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Số Tiền (VNĐ)</ThemedText>
-          <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}> 
+          <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}>
             <ThemedText style={styles.currencySymbol}>₫</ThemedText>
             <TextInput
               style={[styles.amountInput, { color: textColor }]}
@@ -354,16 +385,26 @@ export default function AddTransactionScreen() {
           <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}> 
             <TextInput
               style={[styles.textInput, { color: textColor }]}
-              placeholder="Bạn có thể nói bằng nút mic trên bàn phím: 'chi 45k cà phê hôm nay'"
+              placeholder="Nhập mô tả giao dịch"
               placeholderTextColor={textColor + '60'}
               value={formData.description}
               onChangeText={(text) => setFormData(prev => ({ ...prev, description: text }))}
               multiline
               numberOfLines={3}
             />
-            <Pressable onPress={handleParse} style={{ paddingLeft: 8 }}>
-              <Ionicons name="sparkles" size={20} color={tintColor} />
-            </Pressable>
+            <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+              <Pressable
+                onPress={handleParse}
+                disabled={!isParseable}
+                style={{
+                  marginLeft: 8,
+                  opacity: isParseable ? 1 : 0.4,
+                }}
+                accessibilityLabel="Tự động điền từ mô tả"
+              >
+                <MaterialIcons name="auto-awesome" size={22} color={tintColor} />
+              </Pressable>
+            </Animated.View>
           </ThemedView>
         </ThemedView>
 
@@ -386,7 +427,7 @@ export default function AddTransactionScreen() {
         {isLoanCategory() && (
           <ThemedView style={styles.section}>
             <ThemedText style={styles.sectionTitle}>Thông tin vay/cho vay</ThemedText>
-            <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}> 
+            <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}>
               <Ionicons name="person-outline" size={20} color={tintColor} />
               <TextInput
                 style={[styles.pickerText, { color: textColor }]}
@@ -442,10 +483,11 @@ export default function AddTransactionScreen() {
                       setFormData(prev => ({ ...prev, category }));
                       setShowCategoryPicker(false);
                       // reset loan fields when switching away
-                      if (!((prev) => (formData.type === 'income' && category === 'Vay') || (formData.type === 'expense' && category === 'Cho vay'))) {
-                        setLoanPerson('');
-                        setLoanDueDate(null);
-                      }
+                    const willBeLoan = (formData.type === 'income' && category === 'Vay') || (formData.type === 'expense' && category === 'Cho vay');
+                    if (!willBeLoan) {
+                      setLoanPerson('');
+                      setLoanDueDate(null);
+                    }
                     }}
                   >
                     <ThemedText style={styles.categoryIcon}>
