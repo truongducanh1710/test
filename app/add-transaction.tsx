@@ -17,8 +17,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { database, getTodayDateString } from '@/lib/database';
-import { logDailyProgress } from '@/lib/gamification';
+import { database, getTodayDateString, getCategoryFromDescription } from '@/lib/database';
 import { 
   TransactionFormData, 
   TransactionType, 
@@ -86,6 +85,61 @@ export default function AddTransactionScreen() {
     return (formData.type === 'income' && formData.category === 'Vay') || (formData.type === 'expense' && formData.category === 'Cho vay');
   };
 
+  // Simple Vietnamese NLP parser for voice-typed description
+  const parseVoiceText = (text: string) => {
+    const result: Partial<TransactionFormData> & { type?: TransactionType } = {};
+    const lower = text.toLowerCase();
+
+    // Type detection
+    if (/\b(thu|nhận|được|bán|lương)\b/.test(lower)) result.type = 'income';
+    if (/\b(chi|tiêu|mua|trả|nạp|đóng)\b/.test(lower)) result.type = 'expense';
+
+    // Amount detection: numbers with k/nghìn/ngàn/tr/triệu or plain digits
+    let amountMatch = lower.match(/(\d+[\.,]?\d*)\s*(k|nghìn|ngàn|tr|triệu)?/);
+    if (amountMatch) {
+      const num = parseFloat(amountMatch[1].replace(/\./g, '').replace(/,/g, '.'));
+      const unit = amountMatch[2];
+      let amount = num;
+      if (unit === 'k' || unit === 'nghìn' || unit === 'ngàn') amount = num * 1000;
+      if (unit === 'tr' || unit === 'triệu') amount = num * 1_000_000;
+      if (amount > 0) result.amount = String(Math.round(amount));
+    }
+
+    // Date detection: hôm nay/hôm qua or dd/mm(/yyyy)
+    if (/hôm nay/.test(lower)) result.date = getTodayDateString();
+    if (/hôm qua/.test(lower)) {
+      const d = new Date(); d.setDate(d.getDate() - 1);
+      result.date = d.toISOString().split('T')[0];
+    }
+    const dm = lower.match(/\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{4}))?\b/);
+    if (dm) {
+      const d = parseInt(dm[1], 10), m = parseInt(dm[2], 10) - 1, y = dm[3] ? parseInt(dm[3], 10) : new Date().getFullYear();
+      const dt = new Date(y, m, d);
+      if (!isNaN(dt.getTime())) result.date = dt.toISOString().split('T')[0];
+    }
+
+    // Category from description
+    const cat = getCategoryFromDescription(text);
+    if (cat) result.category = cat;
+
+    return result;
+  };
+
+  const handleParse = () => {
+    const parsed = parseVoiceText(formData.description || '');
+    if (!parsed || Object.keys(parsed).length === 0) {
+      Alert.alert('Không nhận diện được', 'Hãy nói/gõ ví dụ: "chi 45k cà phê hôm nay"');
+      return;
+    }
+    setFormData(prev => ({
+      amount: parsed.amount ?? prev.amount,
+      description: prev.description,
+      category: parsed.category ?? prev.category,
+      date: parsed.date ?? prev.date,
+      type: parsed.type ?? prev.type,
+    }));
+  };
+
   const handleSave = async () => {
     const validationError = validateTransaction(formData);
     if (validationError) {
@@ -130,11 +184,6 @@ export default function AddTransactionScreen() {
           due_date: loanDueDate || null,
         });
       }
-
-      // Habit streak logging: mark today's progress after the first transaction
-      try {
-        await logDailyProgress(getTodayDateString());
-      } catch {}
 
       router.back();
     } catch (error) {
@@ -233,7 +282,7 @@ export default function AddTransactionScreen() {
         {/* Transaction Type Toggle */}
         <ThemedView style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Loại Giao Dịch</ThemedText>
-          <ThemedView style={[styles.typeToggle, { borderColor: tintColor + '30', backgroundColor: chipBg }]}>
+          <ThemedView style={[styles.typeToggle, { borderColor: tintColor + '30', backgroundColor: chipBg }]}> 
             <Pressable 
               style={[
                 styles.typeButton, 
@@ -282,7 +331,7 @@ export default function AddTransactionScreen() {
         {/* Amount */}
         <ThemedView style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Số Tiền (VNĐ)</ThemedText>
-          <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}>
+          <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}> 
             <ThemedText style={styles.currencySymbol}>₫</ThemedText>
             <TextInput
               style={[styles.amountInput, { color: textColor }]}
@@ -302,16 +351,19 @@ export default function AddTransactionScreen() {
         {/* Description */}
         <ThemedView style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Mô Tả</ThemedText>
-          <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}>
+          <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}> 
             <TextInput
               style={[styles.textInput, { color: textColor }]}
-              placeholder="Nhập mô tả giao dịch"
+              placeholder="Bạn có thể nói bằng nút mic trên bàn phím: 'chi 45k cà phê hôm nay'"
               placeholderTextColor={textColor + '60'}
               value={formData.description}
               onChangeText={(text) => setFormData(prev => ({ ...prev, description: text }))}
               multiline
               numberOfLines={3}
             />
+            <Pressable onPress={handleParse} style={{ paddingLeft: 8 }}>
+              <Ionicons name="sparkles" size={20} color={tintColor} />
+            </Pressable>
           </ThemedView>
         </ThemedView>
 
@@ -334,7 +386,7 @@ export default function AddTransactionScreen() {
         {isLoanCategory() && (
           <ThemedView style={styles.section}>
             <ThemedText style={styles.sectionTitle}>Thông tin vay/cho vay</ThemedText>
-            <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}>
+            <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}> 
               <Ionicons name="person-outline" size={20} color={tintColor} />
               <TextInput
                 style={[styles.pickerText, { color: textColor }]}
