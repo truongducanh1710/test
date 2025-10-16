@@ -41,6 +41,44 @@ export interface Loan {
   closed_at?: string | null;
 }
 
+// Goals & Plans models
+export interface Goal {
+  id?: string;
+  name: string;
+  target_amount: number;
+  deadline?: string | null;
+  wallet_id?: string | null;
+  priority?: number;
+  status?: 'active' | 'paused' | 'completed';
+  created_at?: string;
+}
+
+export interface GoalContribution {
+  id?: string;
+  goal_id: string;
+  amount: number;
+  date: string; // yyyy-mm-dd
+  source: 'manual' | 'auto';
+  note?: string | null;
+}
+
+export interface FinancialPlan {
+  id?: string;
+  created_at?: string;
+  horizon_months?: number;
+  emergency_months?: number;
+  recommended_wallets?: any; // {Essentials:number, Savings:number, Education:number, Lifestyle:number}
+  notes?: string | null;
+}
+
+export interface PlanAction {
+  id?: string;
+  plan_id: string;
+  title: string;
+  due_date?: string | null;
+  status?: 'todo' | 'done';
+}
+
 // Budgeting models
 export interface Budget {
   id?: string;
@@ -956,6 +994,138 @@ class DatabaseManager {
     await this.ensureInitialized();
     const loans = await this.listLoans('open');
     return loans.slice(0, limit);
+  }
+
+  // ------- Goals APIs -------
+  async createGoal(goal: Omit<Goal, 'id' | 'created_at' | 'status'> & { status?: Goal['status'] }): Promise<string> {
+    await this.ensureInitialized();
+    if (!this.sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+    const payload = {
+      name: goal.name.trim(),
+      target_amount: Number(goal.target_amount),
+      deadline: goal.deadline || null,
+      wallet_id: goal.wallet_id || null,
+      priority: goal.priority ?? 0,
+      status: goal.status || 'active',
+    };
+    const { data, error } = await this.sb.from('goals').insert(payload).select('id').single();
+    if (error) throw new DatabaseException('INSERT_FAILED', error.message as any);
+    return data!.id as string;
+  }
+
+  async upsertGoal(goal: Partial<Goal> & { id?: string }): Promise<string> {
+    await this.ensureInitialized();
+    if (!this.sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+    const { data, error } = await this.sb.from('goals').upsert(goal as any).select('id').single();
+    if (error) throw new DatabaseException('UPSERT_ERROR', error.message as any);
+    return data!.id as string;
+  }
+
+  async deleteGoal(id: string): Promise<void> {
+    await this.ensureInitialized();
+    if (!this.sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+    const { error } = await this.sb.from('goals').delete().eq('id', id);
+    if (error) throw new DatabaseException('DELETE_ERROR', error.message as any);
+  }
+
+  async listGoals(): Promise<Goal[]> {
+    await this.ensureInitialized();
+    if (!this.sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+    const { data, error } = await this.sb.from('goals').select('*').order('priority', { ascending: false }).order('created_at', { ascending: true });
+    if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+    return (data || []) as Goal[];
+  }
+
+  async addContribution(c: Omit<GoalContribution, 'id'>): Promise<string> {
+    await this.ensureInitialized();
+    if (!this.sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+    const payload = { ...c, note: c.note || null } as any;
+    const { data, error } = await this.sb.from('goal_contributions').insert(payload).select('id').single();
+    if (error) throw new DatabaseException('INSERT_FAILED', error.message as any);
+    return data!.id as string;
+  }
+
+  async listContributions(goalId: string): Promise<GoalContribution[]> {
+    await this.ensureInitialized();
+    if (!this.sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+    const { data, error } = await this.sb.from('goal_contributions').select('*').eq('goal_id', goalId).order('date', { ascending: false });
+    if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+    return (data || []) as GoalContribution[];
+  }
+
+  async computeGoalProgress(goalId: string): Promise<{ contributed: number; remaining: number; percent: number }> {
+    await this.ensureInitialized();
+    if (!this.sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+    const { data: goal, error: gErr } = await this.sb.from('goals').select('target_amount').eq('id', goalId).single();
+    if (gErr) throw new DatabaseException('QUERY_ERROR', gErr.message as any);
+    const { data: contribs, error: cErr } = await this.sb.from('goal_contributions').select('amount').eq('goal_id', goalId);
+    if (cErr) throw new DatabaseException('QUERY_ERROR', cErr.message as any);
+    const contributed = (contribs || []).reduce((s, r: any) => s + Number(r.amount), 0);
+    const remaining = Math.max(0, Number(goal?.target_amount || 0) - contributed);
+    const percent = (Number(goal?.target_amount || 0) > 0) ? (contributed / Number(goal?.target_amount || 0)) * 100 : 0;
+    return { contributed, remaining, percent };
+  }
+
+  // ------- Financial Plan APIs -------
+  async getFinancialPlan(): Promise<FinancialPlan | null> {
+    await this.ensureInitialized();
+    if (!this.sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+    const { data, error } = await this.sb.from('financial_plans').select('*').order('created_at', { ascending: false }).limit(1);
+    if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+    return (data && data[0]) || null;
+  }
+
+  async upsertFinancialPlan(plan: Partial<FinancialPlan> & { id?: string }): Promise<string> {
+    await this.ensureInitialized();
+    if (!this.sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+    const { data, error } = await this.sb.from('financial_plans').upsert(plan as any).select('id').single();
+    if (error) throw new DatabaseException('UPSERT_ERROR', error.message as any);
+    return data!.id as string;
+  }
+
+  async listPlanActions(planId: string): Promise<PlanAction[]> {
+    await this.ensureInitialized();
+    if (!this.sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+    const { data, error } = await this.sb.from('plan_actions').select('*').eq('plan_id', planId).order('due_date', { ascending: true });
+    if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+    return (data || []) as PlanAction[];
+  }
+
+  async upsertPlanAction(action: Partial<PlanAction> & { id?: string }): Promise<string> {
+    await this.ensureInitialized();
+    if (!this.sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+    const { data, error } = await this.sb.from('plan_actions').upsert(action as any).select('id').single();
+    if (error) throw new DatabaseException('UPSERT_ERROR', error.message as any);
+    return data!.id as string;
+  }
+
+  async getRecommendedWalletPercents(start: string, end: string): Promise<Record<string, number>> {
+    // Heuristic: map spend by category -> wallets, normalize to 100%, apply floors/ceilings
+    await this.ensureInitialized();
+    if (!this.sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+    const spendByCatArr = await this.getTransactionsByCategory('expense', start, end);
+    const spendByCat = new Map(spendByCatArr.map(r => [r.category, r.total]));
+    const mapToWallet = (cat: string): string => {
+      const e = ['Ăn uống','Di chuyển','Xăng xe','Nhà ở','Tiền điện','Tiền nước','Internet','Điện thoại','Y tế','Khác'];
+      const l = ['Mua sắm','Giải trí'];
+      const edu = ['Học tập'];
+      if (e.includes(cat)) return 'Essentials';
+      if (l.includes(cat)) return 'Lifestyle';
+      if (edu.includes(cat)) return 'Education';
+      return 'Essentials';
+    };
+    const sums: Record<string, number> = { Essentials: 0, Savings: 0, Education: 0, Lifestyle: 0 };
+    spendByCat.forEach((v, k) => { sums[mapToWallet(k)] += v; });
+    // Set Savings as residual target (e.g., 20% baseline) if income known; here simple baseline
+    const total = Object.values(sums).reduce((a, b) => a + b, 0) || 1;
+    const pct = Object.fromEntries(Object.entries(sums).map(([k, v]) => [k, Math.round((v / total) * 100)]));
+    // Clamp & normalize
+    const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+    pct.Essentials = clamp(pct.Essentials, 40, 70);
+    pct.Lifestyle = clamp(pct.Lifestyle, 5, 25);
+    pct.Education = clamp(pct.Education, 5, 20);
+    pct.Savings = clamp(100 - (pct.Essentials + pct.Lifestyle + pct.Education), 5, 40);
+    return pct;
   }
 }
 

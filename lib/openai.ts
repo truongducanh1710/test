@@ -438,3 +438,52 @@ export const getMockTransactions = (): AIExtractedTransaction[] => {
     }
   ];
 };
+
+// --------- Finance Chat (Guardrailed) ---------
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export async function chatFinance(messages: ChatMessage[], context: any): Promise<string> {
+  const system = `Bạn là trợ lý tài chính cá nhân, trả lời bằng tiếng Việt.\n` +
+    `Giới hạn: chỉ trả lời về tài chính/ngân sách/giao dịch/tiết kiệm.\n` +
+    `Nếu câu hỏi ngoài phạm vi, lịch sự từ chối và hướng lại chủ đề tài chính.\n` +
+    `Khi đưa lời khuyên, dựa trên số liệu 90 ngày gần nhất trong context.\n` +
+    `Trả lời ngắn gọn, dùng gạch đầu dòng khi hữu ích.`;
+
+  if (!isOpenAIConfigured()) {
+    try {
+      const { totals, byCat, loans } = context || {};
+      const n = new Intl.NumberFormat('vi-VN');
+      const lines: string[] = [];
+      if (totals) {
+        lines.push(`Tổng 90 ngày: Thu ${n.format(totals.income || 0)} ₫, Chi ${n.format(totals.expense || 0)} ₫.`);
+      }
+      if (Array.isArray(byCat) && byCat.length) {
+        const top = byCat.slice(0, 3).map((c: any) => `${c.category}: ${n.format(c.total)} ₫`).join('; ');
+        lines.push(`Top chi tiêu: ${top}.`);
+      }
+      if (loans && (loans.openCount || loans.dueSoon)) {
+        lines.push(`Khoản vay/cho vay đang mở: ${loans.openCount || 0}, sắp đến hạn trong 3 ngày: ${loans.dueSoon || 0}.`);
+      }
+      lines.push(`(Bản tóm tắt cục bộ — thêm API key để nhận tư vấn chi tiết hơn).`);
+      return lines.join('\n');
+    } catch {
+      return 'Chưa cấu hình API key. Vào Cài đặt để thêm khóa OpenAI.';
+    }
+  }
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    temperature: 0.3,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'system', content: `DỮ LIỆU 90 NGÀY:\n${JSON.stringify(context).slice(0, 5000)}` },
+      ...messages,
+    ],
+    max_tokens: 800,
+  });
+
+  return response.choices[0]?.message?.content?.trim() || '';
+}

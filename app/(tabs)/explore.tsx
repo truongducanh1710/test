@@ -52,6 +52,8 @@ export default function FinanceScreen() {
   const [loansSummary, setLoansSummary] = useState<{ totalBorrow: number; totalLend: number; dueSoon: number; openCount: number }>({ totalBorrow: 0, totalLend: 0, dueSoon: 0, openCount: 0 });
   const [recentLoans, setRecentLoans] = useState<{ id: string; kind: 'borrow' | 'lend'; person: string; due_date: string | null; amount: number }[]>([]);
   const [loansLoading, setLoansLoading] = useState(false);
+  const [goalsLoading, setGoalsLoading] = useState(false);
+  const [recentGoals, setRecentGoals] = useState<{ id: string; name: string; target: number; contributed: number; percent: number }[]>([]);
   
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
@@ -139,8 +141,43 @@ export default function FinanceScreen() {
             database.getRecentLoans(3),
           ]);
           setLoansSummary(summary);
-          setRecentLoans(recent);
+          try {
+            const recentWithAmt = await Promise.all(recent.map(async (l) => {
+              const tx = await database.getTransactionById(l.transaction_id);
+              return { id: l.id!, kind: l.kind, person: l.person, due_date: l.due_date || null, amount: Number(tx?.amount || 0) };
+            }));
+            setRecentLoans(recentWithAmt);
+          } catch {
+            setRecentLoans([]);
+          }
           setLoansLoading(false);
+
+          // Goals (seed 1–2 demo if empty, then load top 2)
+          setGoalsLoading(true);
+          try {
+            let goals = [] as any[];
+            try {
+              goals = await database.listGoals();
+            } catch {}
+            if (!goals || goals.length === 0) {
+              try {
+                await database.createGoal({ name: 'Quỹ dự phòng', target_amount: 10000000, deadline: null, wallet_id: null, priority: 10 });
+                await database.createGoal({ name: 'MacBook mới', target_amount: 30000000, deadline: null, wallet_id: null, priority: 5 });
+                goals = await database.listGoals();
+              } catch {}
+            }
+            const top = (goals || []).slice(0, 2);
+            const withProgress: { id: string; name: string; target: number; contributed: number; percent: number }[] = [];
+            for (const g of top) {
+              try {
+                const p = await database.computeGoalProgress(g.id!);
+                withProgress.push({ id: g.id!, name: g.name, target: Number(g.target_amount || 0), contributed: p.contributed, percent: p.percent });
+              } catch {}
+            }
+            setRecentGoals(withProgress);
+          } finally {
+            setGoalsLoading(false);
+          }
 
           // schedule digest once (idempotent-ish; harmless if repeats)
           scheduleDailyDigest(9).catch(() => {});
@@ -154,7 +191,15 @@ export default function FinanceScreen() {
         fetchTopCategories(range, true);
         loadBudgetAndWallets(range);
         database.getLoansSummary().then(setLoansSummary).catch(() => {});
-        database.getRecentLoans(3).then(setRecentLoans).catch(() => {});
+        database.getRecentLoans(3)
+          .then(async (loans) => {
+            const recentWithAmt = await Promise.all(loans.map(async (l) => {
+              const tx = await database.getTransactionById(l.transaction_id);
+              return { id: l.id!, kind: l.kind, person: l.person, due_date: l.due_date || null, amount: Number(tx?.amount || 0) };
+            }));
+            setRecentLoans(recentWithAmt);
+          })
+          .catch(() => {});
       };
       databaseEvents.on('transactions_changed', onChange);
       databaseEvents.on('category_budgets_changed', onChange);
@@ -240,9 +285,7 @@ export default function FinanceScreen() {
     router.push({ pathname: '/budget' } as any);
   };
 
-  const handleFinancialGoals = () => {
-    Alert.alert('Mục Tiêu Tài Chính', 'Tính năng mục tiêu tài chính sẽ ra mắt sớm!');
-  };
+  
 
   if (loading) {
     return (
@@ -444,6 +487,37 @@ export default function FinanceScreen() {
         )}
       </ThemedView>
 
+      {/* Goals Card */}
+      <ThemedView style={[styles.categoriesContainer, { backgroundColor: cardBg }]}> 
+        <ThemedText type="title" style={styles.sectionTitle}>Mục tiêu</ThemedText>
+        {goalsLoading ? (
+          <ActivityIndicator size="small" color={tintColor} />
+        ) : (
+          <>
+            {recentGoals.length > 0 ? (
+              recentGoals.map(g => (
+                <ThemedView key={g.id} style={{ marginBottom: 10, backgroundColor: 'transparent' }}>
+                  <ThemedText style={{ fontWeight: '700' }}>{g.name}</ThemedText>
+                  <ThemedText style={{ opacity: 0.7, marginTop: 4 }}>
+                    {formatCurrency(g.contributed)} / {formatCurrency(g.target)} ({g.percent.toFixed(0)}%)
+                  </ThemedText>
+                  <ThemedView style={{ height: 8, borderRadius: 4, backgroundColor: dividerColor, overflow: 'hidden', marginTop: 6 }}>
+                    <ThemedView style={{ height: '100%', width: `${Math.min(100, g.percent)}%`, backgroundColor: tintColor }} />
+                  </ThemedView>
+                </ThemedView>
+              ))
+            ) : (
+              <ThemedText style={{ opacity: 0.7 }}>Chưa có mục tiêu</ThemedText>
+            )}
+
+            <Pressable style={[styles.rangeSelector, { alignSelf: 'flex-end', marginTop: 10, borderColor: tintColor + '60' }]} onPress={() => router.push('/goals' as any)}>
+              <ThemedText style={[styles.rangeSelectorText, { color: tintColor }]}>Xem tất cả</ThemedText>
+              <Ionicons name="chevron-forward" size={18} color={tintColor} />
+            </Pressable>
+          </>
+        )}
+      </ThemedView>
+
       {/* Monthly Trends */}
       <ThemedView style={[styles.trendsContainer, { backgroundColor: cardBg }]}> 
         <ThemedText type="title" style={styles.sectionTitle}>Xu Hướng 6 Tháng Gần Đây</ThemedText>
@@ -501,12 +575,12 @@ export default function FinanceScreen() {
         </Pressable>
 
         <Pressable 
-            style={[styles.toolCard, { backgroundColor: '#8b5cf6' }]}
-            onPress={handleFinancialGoals}
+            style={[styles.toolCard, { backgroundColor: '#0ea5e9' }]}
+            onPress={() => router.push('/goals' as any)}
           >
             <Ionicons name="flag-outline" size={32} color="white" />
-            <ThemedText style={styles.toolTitle}>Mục Tiêu</ThemedText>
-            <ThemedText style={styles.toolSubtitle}>Kế hoạch tài chính</ThemedText>
+            <ThemedText style={styles.toolTitle}>Mục tiêu</ThemedText>
+            <ThemedText style={styles.toolSubtitle}>Tiến độ tiết kiệm</ThemedText>
         </Pressable>
 
         <Pressable 
