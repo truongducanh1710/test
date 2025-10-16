@@ -46,6 +46,10 @@ export function CompactTransactionCard({ transaction, onPress, onLongPress }: Co
     });
   };
 
+  const ownerBadge = (transaction.owner_user_id && typeof transaction.owner_user_id === 'string')
+    ? transaction.owner_user_id.slice(0, 1).toUpperCase()
+    : null;
+
   return (
     <Pressable onPress={handlePress} onLongPress={handleLongPress} disabled={!onPress && !onLongPress}>
       <ThemedView style={[styles.container, { borderBottomColor: borderColor }]}>
@@ -68,6 +72,14 @@ export function CompactTransactionCard({ transaction, onPress, onLongPress }: Co
               <ThemedText style={[styles.date, { color: textColor }]}>
                 {formatDate(transaction.date)}
               </ThemedText>
+              {ownerBadge ? (
+                <>
+                  <ThemedText style={[styles.separator, { color: textColor }]}>•</ThemedText>
+                  <ThemedView style={styles.ownerBadge}>
+                    <ThemedText style={styles.ownerBadgeText}>{ownerBadge}</ThemedText>
+                  </ThemedView>
+                </>
+              ) : null}
               {transaction.source === 'ai' && (
                 <>
                   <ThemedText style={[styles.separator, { color: textColor }]}>•</ThemedText>
@@ -324,6 +336,18 @@ const styles = StyleSheet.create({
     color: '#6366f1',
     marginLeft: 4,
     fontWeight: '500',
+  },
+  ownerBadge: {
+    borderWidth: 1,
+    borderColor: '#9993',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  ownerBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    opacity: 0.8,
   },
   actions: {
     flexDirection: 'row',
