@@ -9,6 +9,7 @@ import {
   createHousehold,
   getHouseholdMembers,
   createHouseholdInvite,
+  deleteHousehold,
   type Household,
   type HouseholdMember,
 } from '@/lib/database';
@@ -30,6 +31,8 @@ export default function FamilyScreen() {
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newHouseholdName, setNewHouseholdName] = useState('');
+  const [pasteUrl, setPasteUrl] = useState('');
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -43,6 +46,8 @@ export default function FamilyScreen() {
         router.replace('/auth');
         return;
       }
+
+      setCurrentUserId(user.id);
 
       const hhList = await getUserHouseholds(user.id);
       setHouseholds(hhList);
@@ -109,6 +114,55 @@ export default function FamilyScreen() {
     }
   };
 
+  const loadFromClipboard = async () => {
+    const val = await Clipboard.getStringAsync();
+    if (val) setPasteUrl(val.trim());
+  };
+
+  const handleJoinByLink = async () => {
+    const raw = pasteUrl.trim();
+    if (!raw) {
+      Alert.alert('Thiếu link', 'Dán link mời vào trước khi tham gia.');
+      return;
+    }
+    try {
+      const url = new URL(raw);
+      const hid = url.searchParams.get('hid') || '';
+      const t = url.searchParams.get('t') || '';
+      if (!t) throw new Error('Link mời không hợp lệ');
+      router.replace({ pathname: '/join', params: { hid, t } } as any);
+    } catch {
+      Alert.alert('Link không hợp lệ', 'Hãy dán link dạng test://join?hid=...&t=...');
+    }
+  };
+
+  const confirmAndDeleteHousehold = async () => {
+    if (!currentHouseholdId) return;
+    Alert.alert(
+      'Xóa gia đình',
+      'Hành động này sẽ xóa gia đình và thành viên liên quan. Các giao dịch sẽ không bị xóa nhưng sẽ được tách khỏi gia đình. Bạn có chắc muốn tiếp tục?',
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Xóa',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteHousehold(currentHouseholdId);
+              await setCurrentHouseholdId(null);
+              setCurrentHouseholdIdState(null);
+              setInviteUrl(null);
+              await loadData();
+              Alert.alert('Đã xóa', 'Gia đình đã được xóa thành công');
+            } catch (e: any) {
+              Alert.alert('Lỗi', e?.message || 'Không thể xóa gia đình');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   if (loading) {
     return (
       <ThemedView style={styles.container}>
@@ -118,6 +172,13 @@ export default function FamilyScreen() {
   }
 
   const currentHousehold = households.find((h) => h.id === currentHouseholdId);
+  const isAdminOrCreator = !!(
+    currentUserId &&
+    (
+      (currentHousehold && currentHousehold.created_by === currentUserId) ||
+      members.some((m) => m.user_id === currentUserId && m.role === 'admin')
+    )
+  );
 
   return (
     <ScrollView contentContainerStyle={{ padding: 16 }}>
@@ -192,6 +253,28 @@ export default function FamilyScreen() {
           </ThemedView>
         )}
 
+        {/* Tham gia bằng link mời */}
+        <ThemedView style={[styles.card, { backgroundColor: bg }]}>
+          <ThemedText type="subtitle" style={{ marginBottom: 8 }}>
+            Tham gia gia đình bằng link
+          </ThemedText>
+          <TextInput
+            style={[styles.input, { borderColor: tint + '30', color: text }]}
+            placeholder="Dán link mời test://join?hid=...&t=..."
+            placeholderTextColor={text + '60'}
+            value={pasteUrl}
+            onChangeText={setPasteUrl}
+          />
+          <ThemedView style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+            <Pressable style={[styles.button, { backgroundColor: text + '20', flex: 1 }]} onPress={loadFromClipboard}>
+              <ThemedText style={{ fontWeight: '700' }}>Dán từ Clipboard</ThemedText>
+            </Pressable>
+            <Pressable style={[styles.button, { backgroundColor: tint, flex: 1 }]} onPress={handleJoinByLink}>
+              <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Tham gia</ThemedText>
+            </Pressable>
+          </ThemedView>
+        </ThemedView>
+
         {/* Thông tin gia đình hiện tại */}
         {currentHousehold && (
           <>
@@ -209,19 +292,14 @@ export default function FamilyScreen() {
                   </ThemedText>
                 </ThemedView>
               ))}
-            </ThemedView>
-
-            {/* Tham gia bằng QR */}
-            <ThemedView style={[styles.card, { backgroundColor: bg }]}>
-              <ThemedText type="subtitle" style={{ marginBottom: 8 }}>
-                Tham gia gia đình bằng QR
-              </ThemedText>
-              <Pressable
-                style={[styles.button, { backgroundColor: tint }]}
-                onPress={() => router.push('/family/scan' as any)}
-              >
-                <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Quét mã tham gia</ThemedText>
-              </Pressable>
+              {isAdminOrCreator && (
+                <Pressable
+                  style={[styles.button, { backgroundColor: '#ef4444', marginTop: 8 }]}
+                  onPress={confirmAndDeleteHousehold}
+                >
+                  <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Xóa gia đình</ThemedText>
+                </Pressable>
+              )}
             </ThemedView>
 
             {/* Mời thành viên */}
@@ -235,7 +313,7 @@ export default function FamilyScreen() {
                   onPress={handleGenerateInvite}
                 >
                   <ThemedText style={{ color: '#fff', fontWeight: '700' }}>
-                    Tạo mã QR mời
+                    Tạo link mời / QR
                   </ThemedText>
                 </Pressable>
               ) : (

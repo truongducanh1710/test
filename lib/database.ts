@@ -1337,3 +1337,14 @@ export async function getHouseholdMonthlyTotals(
 
   return data as { total_income: number; total_expense: number; transaction_count: number };
 }
+
+/**
+ * Xóa household (chỉ creator hoặc admin). Gọi RPC delete_household
+ */
+export async function deleteHousehold(householdId: string): Promise<void> {
+  await database.init();
+  const sb = (database as any).sb;
+  if (!sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+  const { error } = await sb.rpc('delete_household', { p_household_id: householdId });
+  if (error) throw new DatabaseException('RPC_ERROR', error.message);
+}

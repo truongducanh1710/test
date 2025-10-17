@@ -202,9 +202,15 @@ BEGIN
     RETURN json_build_object('household_id', v_household_id, 'already_member', true);
   END IF;
 
-  -- Add member
+  -- Ensure authenticated
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'not_authenticated';
+  END IF;
+
+  -- Add member (idempotent)
   INSERT INTO public.household_members (household_id, user_id, role)
-  VALUES (v_household_id, auth.uid(), 'member');
+  VALUES (v_household_id, auth.uid(), 'member')
+  ON CONFLICT (household_id, user_id) DO NOTHING;
 
   -- Mark invite as used if single_use
   IF v_invite.single_use THEN
@@ -253,3 +259,34 @@ $$;
 GRANT EXECUTE ON FUNCTION public.create_household_invite TO authenticated;
 GRANT EXECUTE ON FUNCTION public.accept_household_invite TO authenticated;
 GRANT EXECUTE ON FUNCTION public.household_monthly_totals TO authenticated;
+
+-- RPC: delete_household (only creator or admin can delete)
+CREATE OR REPLACE FUNCTION public.delete_household(p_household_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  -- Require login
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'not_authenticated';
+  END IF;
+
+  -- Permission check: creator OR admin member
+  IF NOT (
+    EXISTS (SELECT 1 FROM public.households WHERE id = p_household_id AND created_by = auth.uid())
+    OR EXISTS (
+      SELECT 1 FROM public.household_members
+      WHERE household_id = p_household_id AND user_id = auth.uid() AND role = 'admin'
+    )
+  ) THEN
+    RAISE EXCEPTION 'permission_denied';
+  END IF;
+
+  -- Delete household (CASCADE cleans members/invites; transactions set household_id to NULL)
+  DELETE FROM public.households WHERE id = p_household_id;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.delete_household TO authenticated;
+GRANT EXECUTE ON FUNCTION public.delete_household(uuid) TO authenticated;
