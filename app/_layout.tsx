@@ -36,6 +36,7 @@ export default function RootLayout() {
         <Stack.Screen name="settings/index" options={{ title: 'Cài đặt' }} />
         <Stack.Screen name="join" options={{ headerTitle: 'Tham gia gia đình' }} />
         <Stack.Screen name="reset-password" options={{ headerTitle: 'Đặt lại mật khẩu' }} />
+        <Stack.Screen name="paywall" options={{ headerTitle: 'Nâng cấp' }} />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

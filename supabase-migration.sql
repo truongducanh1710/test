@@ -290,3 +290,200 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.delete_household TO authenticated;
 GRANT EXECUTE ON FUNCTION public.delete_household(uuid) TO authenticated;
+
+-- ============================
+-- Subscriptions / Entitlements
+-- ============================
+
+-- Tables
+CREATE TABLE IF NOT EXISTS public.household_entitlements (
+  household_id UUID NOT NULL REFERENCES public.households(id) ON DELETE CASCADE,
+  entitlement_key TEXT NOT NULL CHECK (entitlement_key IN ('family_pro')),
+  status TEXT NOT NULL CHECK (status IN ('active','in_grace','expired')),
+  source TEXT NOT NULL CHECK (source IN ('store','trial')),
+  period_start TIMESTAMPTZ NOT NULL,
+  period_end TIMESTAMPTZ NOT NULL,
+  will_renew BOOLEAN NOT NULL DEFAULT false,
+  grace_until TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (household_id, entitlement_key)
+);
+
+CREATE TABLE IF NOT EXISTS public.household_trials (
+  household_id UUID PRIMARY KEY REFERENCES public.households(id) ON DELETE CASCADE,
+  started_at TIMESTAMPTZ NOT NULL,
+  ends_at TIMESTAMPTZ NOT NULL,
+  started_by UUID NOT NULL REFERENCES auth.users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.ai_usage (
+  household_id UUID NOT NULL REFERENCES public.households(id) ON DELETE CASCADE,
+  period_month TEXT NOT NULL, -- format YYYY-MM (UTC)
+  feature_key TEXT NOT NULL CHECK (feature_key IN ('ai_advisor')),
+  count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (household_id, period_month, feature_key)
+);
+
+-- Enable RLS
+ALTER TABLE public.household_entitlements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.household_trials ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.ai_usage ENABLE ROW LEVEL SECURITY;
+
+-- Policies: members can read; only via RPC can modify
+CREATE POLICY household_entitlements_select_policy ON public.household_entitlements
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.household_members hm
+      WHERE hm.household_id = household_entitlements.household_id AND hm.user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY household_trials_select_policy ON public.household_trials
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.household_members hm
+      WHERE hm.household_id = household_trials.household_id AND hm.user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY ai_usage_select_policy ON public.ai_usage
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.household_members hm
+      WHERE hm.household_id = ai_usage.household_id AND hm.user_id = auth.uid()
+    )
+  );
+
+-- No direct INSERT/UPDATE/DELETE policies to force RPC usage
+
+-- RPC: start_household_trial (only creator, once per household)
+CREATE OR REPLACE FUNCTION public.start_household_trial(p_household_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_now TIMESTAMPTZ := now();
+  v_ends TIMESTAMPTZ := now() + interval '7 days';
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'not_authenticated';
+  END IF;
+
+  -- creator only
+  IF NOT EXISTS (SELECT 1 FROM public.households h WHERE h.id = p_household_id AND h.created_by = auth.uid()) THEN
+    RAISE EXCEPTION 'permission_denied';
+  END IF;
+
+  -- only once per household
+  IF EXISTS (SELECT 1 FROM public.household_trials t WHERE t.household_id = p_household_id) THEN
+    RAISE EXCEPTION 'trial_already_used';
+  END IF;
+
+  INSERT INTO public.household_trials(household_id, started_at, ends_at, started_by)
+  VALUES (p_household_id, v_now, v_ends, auth.uid());
+
+  INSERT INTO public.household_entitlements(
+    household_id, entitlement_key, status, source, period_start, period_end, will_renew, grace_until, updated_at
+  ) VALUES (
+    p_household_id, 'family_pro', 'active', 'trial', v_now, v_ends, false, NULL, v_now
+  )
+  ON CONFLICT (household_id, entitlement_key)
+  DO UPDATE SET status='active', source='trial', period_start=excluded.period_start, period_end=excluded.period_end,
+                will_renew=false, grace_until=NULL, updated_at=v_now;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.start_household_trial(UUID) TO authenticated;
+
+-- RPC: get_household_entitlement (visible to members)
+CREATE OR REPLACE FUNCTION public.get_household_entitlement(p_household_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_ent RECORD;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'not_authenticated';
+  END IF;
+
+  -- must be member
+  IF NOT EXISTS (
+    SELECT 1 FROM public.household_members hm WHERE hm.household_id = p_household_id AND hm.user_id = auth.uid()
+  ) THEN
+    RAISE EXCEPTION 'permission_denied';
+  END IF;
+
+  SELECT * INTO v_ent FROM public.household_entitlements e
+  WHERE e.household_id = p_household_id AND e.entitlement_key = 'family_pro';
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('entitlement_key','family_pro','status','expired');
+  END IF;
+
+  RETURN to_jsonb(v_ent);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_household_entitlement(UUID) TO authenticated;
+
+-- RPC: use_ai_quota (returns { allowed: boolean, remaining: int })
+CREATE OR REPLACE FUNCTION public.use_ai_quota(p_household_id UUID, p_feature TEXT DEFAULT 'ai_advisor')
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_now TIMESTAMPTZ := now();
+  v_month TEXT := to_char(date_trunc('month', v_now AT TIME ZONE 'UTC'), 'YYYY-MM');
+  v_quota INT := 5; -- free default
+  v_used INT := 0;
+  v_ent RECORD;
+  v_allowed BOOLEAN := FALSE;
+  v_remaining INT := 0;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'not_authenticated';
+  END IF;
+
+  -- member check
+  IF NOT EXISTS (
+    SELECT 1 FROM public.household_members hm WHERE hm.household_id = p_household_id AND hm.user_id = auth.uid()
+  ) THEN
+    RAISE EXCEPTION 'permission_denied';
+  END IF;
+
+  -- entitlement check
+  SELECT * INTO v_ent FROM public.household_entitlements e
+  WHERE e.household_id = p_household_id AND e.entitlement_key = 'family_pro';
+
+  IF FOUND THEN
+    IF v_ent.status IN ('active','in_grace') AND v_ent.period_end >= v_now THEN
+      v_quota := 200; -- Pro quota
+    END IF;
+  END IF;
+
+  -- get current usage
+  SELECT au.count INTO v_used FROM public.ai_usage au
+  WHERE au.household_id = p_household_id AND au.period_month = v_month AND au.feature_key = p_feature;
+  IF v_used IS NULL THEN v_used := 0; END IF;
+
+  IF v_used < v_quota THEN
+    v_allowed := TRUE;
+    v_remaining := v_quota - (v_used + 1);
+    INSERT INTO public.ai_usage(household_id, period_month, feature_key, count)
+    VALUES (p_household_id, v_month, p_feature, 1)
+    ON CONFLICT (household_id, period_month, feature_key)
+    DO UPDATE SET count = public.ai_usage.count + 1;
+  ELSE
+    v_allowed := FALSE;
+    v_remaining := 0;
+  END IF;
+
+  RETURN jsonb_build_object('allowed', v_allowed, 'remaining', v_remaining, 'quota', v_quota, 'used', v_used + (CASE WHEN v_allowed THEN 1 ELSE 0 END));
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.use_ai_quota(UUID, TEXT) TO authenticated;
