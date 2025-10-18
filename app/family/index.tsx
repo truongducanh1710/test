@@ -9,11 +9,13 @@ import {
   createHousehold,
   getHouseholdMembers,
   createHouseholdInvite,
+  deleteHousehold,
   type Household,
   type HouseholdMember,
 } from '@/lib/database';
 import { getCurrentUser } from '@/lib/auth';
 import { getCurrentHouseholdId, setCurrentHouseholdId } from '@/lib/family';
+import { leaveHousehold, recomputeEntitlementsForSelf } from '@/lib/database';
 import QRCode from 'react-native-qrcode-svg';
 import * as Clipboard from 'expo-clipboard';
 
@@ -31,6 +33,7 @@ export default function FamilyScreen() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newHouseholdName, setNewHouseholdName] = useState('');
   const [pasteUrl, setPasteUrl] = useState('');
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -44,6 +47,8 @@ export default function FamilyScreen() {
         router.replace('/auth');
         return;
       }
+
+      setCurrentUserId(user.id);
 
       const hhList = await getUserHouseholds(user.id);
       setHouseholds(hhList);
@@ -86,6 +91,7 @@ export default function FamilyScreen() {
   const handleSelectHousehold = async (id: string) => {
     await setCurrentHouseholdId(id);
     setCurrentHouseholdIdState(id);
+    await recomputeEntitlementsForSelf().catch(() => {});
     loadData();
   };
 
@@ -132,6 +138,61 @@ export default function FamilyScreen() {
     }
   };
 
+  const confirmAndDeleteHousehold = async () => {
+    if (!currentHouseholdId) return;
+    Alert.alert(
+      'Xóa gia đình',
+      'Hành động này sẽ xóa gia đình và thành viên liên quan. Các giao dịch sẽ không bị xóa nhưng sẽ được tách khỏi gia đình. Bạn có chắc muốn tiếp tục?',
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Xóa',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteHousehold(currentHouseholdId);
+              await setCurrentHouseholdId(null);
+              setCurrentHouseholdIdState(null);
+              setInviteUrl(null);
+              await recomputeEntitlementsForSelf().catch(() => {});
+              await loadData();
+              Alert.alert('Đã xóa', 'Gia đình đã được xóa thành công');
+            } catch (e: any) {
+              Alert.alert('Lỗi', e?.message || 'Không thể xóa gia đình');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const confirmAndLeaveHousehold = async () => {
+    if (!currentHouseholdId) return;
+    Alert.alert(
+      'Rời gia đình',
+      'Bạn sẽ rời gia đình này. Nếu bạn là người trả tiền Pro, quyền Pro sẽ chuyển sang cá nhân bạn cho đến hết kỳ hiện tại.',
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Rời gia đình',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await leaveHousehold(currentHouseholdId);
+              await setCurrentHouseholdId(null);
+              setCurrentHouseholdIdState(null);
+              await recomputeEntitlementsForSelf().catch(() => {});
+              await loadData();
+              Alert.alert('Đã rời', 'Bạn đã rời gia đình thành công');
+            } catch (e: any) {
+              Alert.alert('Lỗi', e?.message || 'Không thể rời gia đình');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   if (loading) {
     return (
       <ThemedView style={styles.container}>
@@ -141,14 +202,21 @@ export default function FamilyScreen() {
   }
 
   const currentHousehold = households.find((h) => h.id === currentHouseholdId);
+  const isAdminOrCreator = !!(
+    currentUserId &&
+    (
+      (currentHousehold && currentHousehold.created_by === currentUserId) ||
+      members.some((m) => m.user_id === currentUserId && m.role === 'admin')
+    )
+  );
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16 }}>
+    <ScrollView style={{ backgroundColor: bg }} contentContainerStyle={{ padding: 16 }} showsVerticalScrollIndicator={false}>
       <ThemedView style={{ gap: 16 }}>
         <ThemedText type="title">Quản lý Gia đình</ThemedText>
 
         {/* Danh sách households */}
-        <ThemedView style={[styles.card, { backgroundColor: bg }]}>
+        <ThemedView style={styles.card}>
           <ThemedText type="subtitle" style={{ marginBottom: 8 }}>
             Gia đình của bạn
           </ThemedText>
@@ -184,7 +252,7 @@ export default function FamilyScreen() {
             <ThemedText style={{ color: '#fff', fontWeight: '700' }}>+ Tạo gia đình mới</ThemedText>
           </Pressable>
         ) : (
-          <ThemedView style={[styles.card, { backgroundColor: bg }]}>
+          <ThemedView style={styles.card}>
             <ThemedText type="subtitle" style={{ marginBottom: 8 }}>
               Tạo gia đình mới
             </ThemedText>
@@ -216,7 +284,7 @@ export default function FamilyScreen() {
         )}
 
         {/* Tham gia bằng link mời */}
-        <ThemedView style={[styles.card, { backgroundColor: bg }]}>
+        <ThemedView style={styles.card}>
           <ThemedText type="subtitle" style={{ marginBottom: 8 }}>
             Tham gia gia đình bằng link
           </ThemedText>
@@ -240,7 +308,7 @@ export default function FamilyScreen() {
         {/* Thông tin gia đình hiện tại */}
         {currentHousehold && (
           <>
-            <ThemedView style={[styles.card, { backgroundColor: bg }]}>
+            <ThemedView style={styles.card}>
               <ThemedText type="subtitle" style={{ marginBottom: 8 }}>
                 {currentHousehold.name}
               </ThemedText>
@@ -254,10 +322,25 @@ export default function FamilyScreen() {
                   </ThemedText>
                 </ThemedView>
               ))}
+              {isAdminOrCreator ? (
+                <Pressable
+                  style={[styles.button, { backgroundColor: '#ef4444', marginTop: 8 }]}
+                  onPress={confirmAndDeleteHousehold}
+                >
+                  <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Xóa gia đình</ThemedText>
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={[styles.button, { backgroundColor: text + '20', marginTop: 8 }]}
+                  onPress={confirmAndLeaveHousehold}
+                >
+                  <ThemedText style={{ fontWeight: '700' }}>Rời gia đình</ThemedText>
+                </Pressable>
+              )}
             </ThemedView>
 
             {/* Mời thành viên */}
-            <ThemedView style={[styles.card, { backgroundColor: bg }]}>
+            <ThemedView style={styles.card}>
               <ThemedText type="subtitle" style={{ marginBottom: 8 }}>
                 Mời thành viên
               </ThemedText>

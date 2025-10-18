@@ -517,12 +517,12 @@ export default function FinanceScreen() {
           </>
         ) : (
           <>
-            <ThemedView style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-              <ThemedView style={{ flex: 1, marginRight: 8 }}>
+            <ThemedView style={{ flexDirection: 'row', justifyContent: 'space-between', backgroundColor: 'transparent' }}>
+              <ThemedView style={{ flex: 1, marginRight: 8, backgroundColor: 'transparent' }}>
                 <ThemedText style={{ opacity: 0.7 }}>Đang vay</ThemedText>
                 <ThemedText style={{ fontWeight: '700', marginBottom: 8 }}>{formatCurrency(loansSummary.totalBorrow)}</ThemedText>
               </ThemedView>
-              <ThemedView style={{ flex: 1, marginLeft: 8 }}>
+              <ThemedView style={{ flex: 1, marginLeft: 8, backgroundColor: 'transparent' }}>
                 <ThemedText style={{ opacity: 0.7 }}>Đang cho vay</ThemedText>
                 <ThemedText style={{ fontWeight: '700', marginBottom: 8 }}>{formatCurrency(loansSummary.totalLend)}</ThemedText>
               </ThemedView>
@@ -530,9 +530,9 @@ export default function FinanceScreen() {
             <ThemedText style={{ opacity: 0.7 }}>Sắp đến hạn (3 ngày): {loansSummary.dueSoon}</ThemedText>
 
             {/* Recent loans */}
-            <ThemedView style={{ marginTop: 10 }}>
+            <ThemedView style={{ marginTop: 10, backgroundColor: 'transparent' }}>
               {recentLoans.map((l) => (
-                <ThemedView key={l.id} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                <ThemedView key={l.id} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8, backgroundColor: 'transparent' }}>
                   <ThemedText style={{ fontWeight: '600' }}>{l.kind === 'borrow' ? 'Vay' : 'Cho vay'} • {l.person}</ThemedText>
                   <ThemedText style={{ opacity: 0.7 }}>{formatCurrency(l.amount)}</ThemedText>
                 </ThemedView>
