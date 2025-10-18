@@ -4,7 +4,7 @@ import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { getCurrentHouseholdId } from '@/lib/family';
-import { getEntitlement, isPro, startTrial } from '@/lib/subscription';
+import { assertHouseholdNotPro, getEntitlement, isPro, startTrial } from '@/lib/subscription';
 
 export default function PaywallScreen() {
   const tint = useThemeColor({}, 'tint');
@@ -39,12 +39,23 @@ export default function PaywallScreen() {
     }
     try {
       setLoading(true);
+      // Guard: chặn nếu household đã có Pro
+      await assertHouseholdNotPro(householdId);
       await startTrial(householdId);
       Alert.alert('Thành công', 'Đã kích hoạt dùng thử 7 ngày cho gia đình');
       const ent = await getEntitlement(householdId);
       setPro(isPro(ent));
     } catch (e: any) {
-      Alert.alert('Lỗi', e?.message || 'Không thể kích hoạt dùng thử');
+      const msg = String(e?.message || '').toLowerCase();
+      if (msg.includes('household_already_pro')) {
+        Alert.alert('Đang có Pro', 'Gia đình đã có Pro đang hoạt động.');
+      } else if (msg.includes('trial_already_used')) {
+        Alert.alert('Đã dùng thử', 'Gia đình đã sử dụng dùng thử trước đó.');
+      } else if (msg.includes('permission_denied')) {
+        Alert.alert('Không có quyền', 'Bạn cần là thành viên của gia đình này.');
+      } else {
+        Alert.alert('Lỗi', e?.message || 'Không thể kích hoạt dùng thử');
+      }
     } finally {
       setLoading(false);
     }
@@ -89,5 +100,7 @@ const styles = StyleSheet.create({
   card: { padding: 16, borderRadius: 12, marginBottom: 16 },
   button: { paddingVertical: 14, borderRadius: 10, alignItems: 'center', marginTop: 8 },
 });
+
+
 
 

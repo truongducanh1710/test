@@ -7,16 +7,12 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { buildFinanceContext90d } from '@/lib/ai-advisor';
 import { chatFinance, ChatMessage } from '@/lib/openai';
-import { useRouter } from 'expo-router';
-import { getCurrentHouseholdId } from '@/lib/family';
-import { useAiQuota } from '@/lib/subscription';
 import { nsKey } from '@/lib/user';
 
 const STORAGE_KEY_BASE = 'assistant.thread.v1';
 
 export default function AssistantScreen() {
   const colorScheme = useColorScheme();
-  const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -68,23 +64,6 @@ export default function AssistantScreen() {
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
     try {
-      // Check AI quota before calling OpenAI
-      try {
-        const hid = await getCurrentHouseholdId();
-        if (hid) {
-          const r = await useAiQuota(hid, 'ai_advisor');
-          if (!r.allowed) {
-            throw new Error('quota_exceeded');
-          }
-        }
-      } catch (qerr: any) {
-        if (qerr?.message === 'quota_exceeded') {
-          setLoading(false);
-          setMessages((prev) => [...prev, { role: 'assistant', content: 'Đã hết lượt AI trong tháng. Nâng cấp Pro để tiếp tục sử dụng.' }]);
-          router.push('/paywall' as any);
-          return;
-        }
-      }
       const reply = await chatFinance([userMsg], context);
       const asst: ChatMessage = { role: 'assistant', content: reply };
       setMessages((prev) => [...prev, asst]);

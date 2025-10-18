@@ -19,6 +19,7 @@ export interface AiQuotaResult {
   remaining: number;
   quota: number;
   used: number;
+  reason?: string;
 }
 
 export async function getEntitlement(householdId: string): Promise<HouseholdEntitlement | { entitlement_key: 'family_pro'; status: 'expired' }> {
@@ -50,5 +51,14 @@ export function isPro(ent: HouseholdEntitlement | { entitlement_key: 'family_pro
   // @ts-ignore
   return ent.status === 'active' || ent.status === 'in_grace';
 }
+
+export async function assertHouseholdNotPro(householdId: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) throw new Error('Supabase chưa được cấu hình');
+  const { error } = await sb.rpc('assert_household_not_pro', { p_household_id: householdId });
+  if (error) throw error;
+}
+
+
 
 

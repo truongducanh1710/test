@@ -9,7 +9,6 @@ import {
   createHousehold,
   getHouseholdMembers,
   createHouseholdInvite,
-  deleteHousehold,
   type Household,
   type HouseholdMember,
 } from '@/lib/database';
@@ -32,7 +31,6 @@ export default function FamilyScreen() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newHouseholdName, setNewHouseholdName] = useState('');
   const [pasteUrl, setPasteUrl] = useState('');
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -46,8 +44,6 @@ export default function FamilyScreen() {
         router.replace('/auth');
         return;
       }
-
-      setCurrentUserId(user.id);
 
       const hhList = await getUserHouseholds(user.id);
       setHouseholds(hhList);
@@ -136,33 +132,6 @@ export default function FamilyScreen() {
     }
   };
 
-  const confirmAndDeleteHousehold = async () => {
-    if (!currentHouseholdId) return;
-    Alert.alert(
-      'Xóa gia đình',
-      'Hành động này sẽ xóa gia đình và thành viên liên quan. Các giao dịch sẽ không bị xóa nhưng sẽ được tách khỏi gia đình. Bạn có chắc muốn tiếp tục?',
-      [
-        { text: 'Hủy', style: 'cancel' },
-        {
-          text: 'Xóa',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteHousehold(currentHouseholdId);
-              await setCurrentHouseholdId(null);
-              setCurrentHouseholdIdState(null);
-              setInviteUrl(null);
-              await loadData();
-              Alert.alert('Đã xóa', 'Gia đình đã được xóa thành công');
-            } catch (e: any) {
-              Alert.alert('Lỗi', e?.message || 'Không thể xóa gia đình');
-            }
-          },
-        },
-      ]
-    );
-  };
-
   if (loading) {
     return (
       <ThemedView style={styles.container}>
@@ -172,13 +141,6 @@ export default function FamilyScreen() {
   }
 
   const currentHousehold = households.find((h) => h.id === currentHouseholdId);
-  const isAdminOrCreator = !!(
-    currentUserId &&
-    (
-      (currentHousehold && currentHousehold.created_by === currentUserId) ||
-      members.some((m) => m.user_id === currentUserId && m.role === 'admin')
-    )
-  );
 
   return (
     <ScrollView contentContainerStyle={{ padding: 16 }}>
@@ -292,14 +254,6 @@ export default function FamilyScreen() {
                   </ThemedText>
                 </ThemedView>
               ))}
-              {isAdminOrCreator && (
-                <Pressable
-                  style={[styles.button, { backgroundColor: '#ef4444', marginTop: 8 }]}
-                  onPress={confirmAndDeleteHousehold}
-                >
-                  <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Xóa gia đình</ThemedText>
-                </Pressable>
-              )}
             </ThemedView>
 
             {/* Mời thành viên */}

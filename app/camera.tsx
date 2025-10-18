@@ -20,15 +20,12 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { OpenAIService, isOpenAIConfigured } from '@/lib/openai';
-import { getCurrentHouseholdId } from '@/lib/family';
-import { useAiQuota } from '@/lib/subscription';
 import { database, getCategoryFromDescription } from '@/lib/database';
 import { CameraState, ProcessingResult } from '@/types/transaction';
 
 const { width, height } = Dimensions.get('window');
 
 export default function CameraScreen() {
-  const router = useRouter();
   const [facing, setFacing] = useState<CameraType>('back');
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraState, setCameraState] = useState<CameraState>('idle');
@@ -40,6 +37,7 @@ export default function CameraScreen() {
   const [pendingToSave, setPendingToSave] = useState<{ amount: number; description: string; category: string; date: string; type: 'income' | 'expense'; source: 'ai' }[]>([]);
   
   const cameraRef = useRef<CameraView>(null);
+  const router = useRouter();
   const backgroundColor = useThemeColor({}, 'background');
   const tintColor = useThemeColor({}, 'tint');
 
@@ -158,24 +156,6 @@ export default function CameraScreen() {
   const processImage = async (imageUri: string) => {
     const startTime = Date.now();
     try {
-      // Check AI quota before processing
-      try {
-        const hid = await getCurrentHouseholdId();
-        if (hid) {
-          const r = await useAiQuota(hid, 'ai_advisor');
-          if (!r.allowed) {
-            throw new Error('quota_exceeded');
-          }
-        }
-      } catch (qerr: any) {
-        if (qerr?.message === 'quota_exceeded') {
-          Alert.alert('Hết lượt AI', 'Bạn đã dùng hết lượt AI trong tháng. Nâng cấp Pro để tiếp tục.', [
-            { text: 'Đóng' },
-            { text: 'Nâng cấp', onPress: () => router.push('/paywall' as any) },
-          ]);
-          return [];
-        }
-      }
       if (!isOpenAIConfigured()) {
         throw new Error('Thiếu API key OpenAI');
       }

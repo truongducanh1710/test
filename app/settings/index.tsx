@@ -95,9 +95,6 @@ export default function SettingsScreen() {
         <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={() => router.push('/family' as any)}>
           <ThemedText style={styles.buttonText}>Quản lý Gia đình</ThemedText>
         </Pressable>
-        <Pressable style={[styles.button, { backgroundColor: text + '20', marginTop: 8 }]} onPress={() => router.push('/paywall' as any)}>
-          <ThemedText style={{ fontWeight: '700' }}>Nâng cấp Pro</ThemedText>
-        </Pressable>
       </ThemedView>
 
       {/* Privacy */}

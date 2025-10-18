@@ -42,3 +42,4 @@ app-example
 /ios
 /android
 \n# env\n.env\n.env.*\n
+.env
