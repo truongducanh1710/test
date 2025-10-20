@@ -262,14 +262,6 @@ export default function HomeScreen() {
             <Ionicons name="list" size={24} color={tintColor} />
             <ThemedText style={[styles.quickActionText, { color: tintColor }]}>Xem Tất Cả</ThemedText>
           </Pressable>
-
-          <Pressable 
-            style={[styles.quickActionButton, { borderColor: tintColor + '60' }]} 
-            onPress={() => router.push('/settings')}
-          >
-            <Ionicons name="settings" size={24} color={tintColor} />
-            <ThemedText style={[styles.quickActionText, { color: tintColor }]}>Cài đặt</ThemedText>
-          </Pressable>
         </ThemedView>
       </ThemedView>
 
