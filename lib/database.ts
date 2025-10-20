@@ -927,6 +927,67 @@ class DatabaseManager {
     return results as { category: string; total: number; count: number }[];
   }
 
+  // Daily net amounts for a given month (year, month: 1-based)
+  async getDailyNetForMonth(year: number, month: number): Promise<Array<{ date: string; income: number; expense: number; net: number; count: number }>> {
+    await this.ensureInitialized();
+    const start = this.toDateString(new Date(year, month - 1, 1));
+    const end = this.toDateString(new Date(year, month, 0));
+    if (this.sb) {
+      const { data, error } = await this.sb.from('transactions').select('amount,type,date').gte('date', start).lte('date', end);
+      if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+      const map = new Map<string, { income: number; expense: number; net: number; count: number }>();
+      (data || []).forEach((r: any) => {
+        const d = r.date as string;
+        const curr = map.get(d) || { income: 0, expense: 0, net: 0, count: 0 };
+        if (r.type === 'income') curr.income += Number(r.amount);
+        else curr.expense += Number(r.amount);
+        curr.net = curr.income - curr.expense;
+        curr.count += 1;
+        map.set(d, curr);
+      });
+      return Array.from(map.entries()).map(([date, v]) => ({ date, ...v })).sort((a, b) => a.date.localeCompare(b.date));
+    }
+    const rows = await this.db!.getAllAsync(
+      `SELECT date,
+              SUM(CASE WHEN type='income' THEN amount ELSE 0 END) as income,
+              SUM(CASE WHEN type='expense' THEN amount ELSE 0 END) as expense,
+              COUNT(*) as count
+       FROM transactions
+       WHERE date >= ? AND date <= ?
+       GROUP BY date
+       ORDER BY date ASC`,
+      [start, end]
+    ) as Array<{ date: string; income: number; expense: number; count: number }>;
+    return rows.map(r => ({ ...r, net: Number(r.income || 0) - Number(r.expense || 0) }));
+  }
+
+  // Category totals for a specific date
+  async getCategoryTotalsForDate(date: string): Promise<Array<{ category: string; total: number; type: 'income' | 'expense'; count: number }>> {
+    await this.ensureInitialized();
+    if (this.sb) {
+      const { data, error } = await this.sb.from('transactions').select('category, amount, type').eq('date', date);
+      if (error) throw new DatabaseException('QUERY_ERROR', error.message as any);
+      const map = new Map<string, { total: number; type: 'income'|'expense'; count: number }>();
+      (data || []).forEach((r: any) => {
+        const key = `${r.category}|${r.type}`;
+        const curr = map.get(key) || { total: 0, type: r.type, count: 0 };
+        curr.total += Number(r.amount);
+        curr.count += 1;
+        map.set(key, curr);
+      });
+      return Array.from(map.entries()).map(([k, v]) => ({ category: k.split('|')[0], ...v })).sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+    }
+    const rows = await this.db!.getAllAsync(
+      `SELECT category, type, SUM(amount) as total, COUNT(*) as count
+       FROM transactions
+       WHERE date = ?
+       GROUP BY category, type
+       ORDER BY ABS(total) DESC`,
+      [date]
+    ) as Array<{ category: string; type: 'income'|'expense'; total: number; count: number }>;
+    return rows;
+  }
+
   async searchTransactions(searchTerm: string): Promise<Transaction[]> {
     if (this.sb) {
       const { data, error } = await this.sb

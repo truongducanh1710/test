@@ -266,8 +266,13 @@ export default function HomeScreen() {
       </ThemedView>
 
       {/* Daily Log (Habit Streak) replacing Top Categories */}
-      <ThemedView style={styles.categoriesContainer}>
-        <ThemedText type="title" style={styles.sectionTitle}>Nhật ký chi tiêu</ThemedText>
+        <ThemedView style={styles.categoriesContainer}>
+        <ThemedView style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <ThemedText type="title" style={styles.sectionTitle}>Nhật ký chi tiêu</ThemedText>
+          <Pressable onPress={() => router.push('/calendar' as any)}>
+            <ThemedText style={{ color: tintColor, fontWeight: '600' }}>Mở lịch tháng</ThemedText>
+          </Pressable>
+        </ThemedView>
         <ThemedText style={{ opacity: 0.8, marginBottom: 8 }}>Ghi ít nhất 1 giao dịch mỗi ngày để duy trì streak.</ThemedText>
 
         {/* Weekday labels */}
