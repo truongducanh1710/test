@@ -343,6 +343,19 @@ class DatabaseManager {
       `;
       await this.db.execAsync(createLoansTable);
 
+      // Chat messages (on-device persistence)
+      const createChatTable = `
+        CREATE TABLE IF NOT EXISTS chat_messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id TEXT,
+          household_id TEXT,
+          role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+          content TEXT NOT NULL,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+      `;
+      await this.db.execAsync(createChatTable);
+
       console.log('Database tables and indexes created successfully');
     } catch (error) {
       throw new DatabaseException('TABLE_CREATION_FAILED', 'Không thể tạo bảng dữ liệu', error as Error);
@@ -369,6 +382,41 @@ class DatabaseManager {
   // ----- Budget APIs (Supabase only; fallback: throw if not configured) -----
   private assertSupabase() {
     if (!this.sb) throw new DatabaseException('NO_SUPABASE', 'Supabase chưa được cấu hình');
+  }
+
+  // ----- Chat history (SQLite only) -----
+  async addChatMessage(role: 'user' | 'assistant', content: string, userId: string | null, householdId: string | null): Promise<number> {
+    await this.ensureInitialized();
+    const res = await this.db!.runAsync(
+      `INSERT INTO chat_messages (user_id, household_id, role, content) VALUES (?, ?, ?, ?)`,
+      [userId || null, householdId || null, role, content]
+    );
+    return Number(res.lastInsertRowId || 0);
+  }
+
+  async listChatMessages(userId: string | null, householdId: string | null, limit: number = 200, offset: number = 0): Promise<Array<{ id: number; role: 'user'|'assistant'; content: string; created_at: string }>> {
+    await this.ensureInitialized();
+    const where: string[] = [];
+    const params: any[] = [];
+    if (userId === null) {
+      where.push('user_id IS NULL');
+    } else {
+      where.push('user_id = ?');
+      params.push(userId);
+    }
+    if (householdId === null) {
+      where.push('household_id IS NULL');
+    } else {
+      where.push('household_id = ?');
+      params.push(householdId);
+    }
+    params.push(limit, offset);
+    const sql = `SELECT id, role, content, created_at FROM chat_messages
+                 WHERE ${where.join(' AND ')}
+                 ORDER BY datetime(created_at) ASC
+                 LIMIT ? OFFSET ?`;
+    const rows = await this.db!.getAllAsync(sql, params);
+    return rows as any;
   }
 
   async getActiveBudget(cycle?: 'weekly' | 'monthly'): Promise<Budget | null> {
@@ -906,19 +954,44 @@ class DatabaseManager {
   async addTransactionsBatch(transactions: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>[]): Promise<string[]> {
     await this.ensureInitialized();
     if (this.sb) {
-      const payload = transactions.map(t => ({
-        amount: t.amount,
-        description: t.description.trim(),
-        category: t.category.trim(),
-        date: t.date,
-        type: t.type,
-        source: t.source,
-        currency: t.currency || 'VND'
-      }));
-      const { data, error } = await this.sb.from('transactions').insert(payload).select('id');
-      if (error) throw new DatabaseException('BATCH_INSERT_ERROR', error.message as any);
-      databaseEvents.emit('transactions_changed');
-      return (data || []).map(r => r.id as string);
+      try {
+        const sb = getSupabase();
+        const authUser = (await sb!.auth.getUser()).data.user;
+        const owner = authUser?.id || null;
+        const payload = transactions.map(t => ({
+          amount: t.amount,
+          description: t.description.trim(),
+          category: t.category.trim(),
+          date: t.date,
+          type: t.type,
+          source: t.source,
+          currency: t.currency || 'VND',
+          is_private: !!(t as any).is_private || false,
+          household_id: (t as any).household_id || null,
+          owner_user_id: owner,
+        }));
+        const { data, error } = await this.sb.from('transactions').insert(payload).select('id');
+        if (error) {
+          const msg = String((error as any)?.message || '').toLowerCase();
+          const isRls = msg.includes('permission denied') || msg.includes('row-level security') || msg.includes('no jwt') || msg.includes('auth');
+          const isCurrencySchema = msg.includes('currency') && (msg.includes('schema') || msg.includes('column') || msg.includes('not find'));
+          if (!isRls && !isCurrencySchema) {
+            throw new DatabaseException('BATCH_INSERT_ERROR', (error as any).message as any);
+          }
+          // fallthrough to SQLite
+        } else {
+          databaseEvents.emit('transactions_changed');
+          return (data || []).map(r => r.id as string);
+        }
+      } catch (e: any) {
+        const msg = String(e?.message || '').toLowerCase();
+        const isRls = msg.includes('permission denied') || msg.includes('row-level security') || msg.includes('no jwt') || msg.includes('auth');
+        if (!isRls) {
+          // non-RLS errors still rethrow
+          throw e instanceof DatabaseException ? e : new DatabaseException('BATCH_INSERT_ERROR', e?.message || 'Insert failed');
+        }
+        // else fall through to SQLite
+      }
     }
 
     if (!this.db) throw new Error('Database not initialized');

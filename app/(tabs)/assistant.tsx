@@ -32,16 +32,35 @@ export default function AssistantScreen() {
 
   const loadThread = useCallback(async () => {
     try {
-      const key = await nsKey(STORAGE_KEY_BASE);
-      const raw = await AsyncStorage.getItem(key);
-      if (raw) setMessages(JSON.parse(raw));
+      const base = await nsKey(STORAGE_KEY_BASE);
+      const hid = await getCurrentHouseholdId();
+      const key = hid ? `${base}:hid:${hid}` : base;
+      // Prefer SQLite chat history; fall back to AsyncStorage once
+      const uid = (await getCurrentUser())?.id || null;
+      await database.init();
+      const rows = await database.listChatMessages(uid, hid, 500, 0);
+      if (rows.length) {
+        setMessages(rows.map(r => ({ role: r.role, content: r.content })) as ChatMessage[]);
+      } else {
+        const raw = await AsyncStorage.getItem(key);
+        if (raw) setMessages(JSON.parse(raw));
+      }
     } catch {}
   }, []);
 
   const saveThread = useCallback(async (data: ChatMessage[]) => {
     try {
-      const key = await nsKey(STORAGE_KEY_BASE);
-      await AsyncStorage.setItem(key, JSON.stringify(data.slice(-30)));
+      const base = await nsKey(STORAGE_KEY_BASE);
+      const hid = await getCurrentHouseholdId();
+      const key = hid ? `${base}:hid:${hid}` : base;
+      // Append only last delta message to SQLite
+      const last = data[data.length - 1];
+      const uid = (await getCurrentUser())?.id || null;
+      if (last) {
+        await database.addChatMessage(last.role as any, last.content, uid, hid);
+      }
+      // Keep AsyncStorage as fallback backup for now
+      await AsyncStorage.setItem(key, JSON.stringify(data.slice(-200)));
     } catch {}
   }, []);
 
@@ -58,8 +77,14 @@ export default function AssistantScreen() {
   }, []);
 
   useEffect(() => {
-    loadThread();
-    loadContext();
+    // Đảm bảo DB init trước khi load lịch sử
+    (async () => {
+      try {
+        await database.init();
+        await loadThread();
+      } catch {}
+      loadContext();
+    })();
   }, [loadThread, loadContext]);
 
   useEffect(() => {
@@ -312,7 +337,7 @@ function parseTransactionsInline(input: string): DraftTx[] {
     const amountMatch = part.match(/((\d+([\.,]\d+)?)\s*(k|ngàn|nghìn|triệu|trieu|tr|m|đ|₫|vnd|vnđ))|(([$€]|usd|eur)\s*\d+([\.,]\d+)?)/i);
     const amount = amountMatch ? normalizeAmountToken(amountMatch[0]) : null;
     if (!amount) continue;
-    const desc = part.replace(amountMatch[0], '').replace(/\s+(đ|₫|vnd|vnđ|usd|eur)/ig,'').trim() || 'Giao dịch';
+    const desc = part.replace(amountMatch![0], '').replace(/\s+(đ|₫|vnd|vnđ|usd|eur)/ig,'').trim() || 'Giao dịch';
     const category = getCategoryFromDescription(desc);
     const hasUnit = /(\d+([\.,]\d+)?\s*(đ|₫|vnd|vnđ|k|ngàn|nghìn|triệu|trieu|tr|m))|(([$€]|usd|eur)\s*\d+)/i.test(part);
     // If no explicit money unit and category is unknown => skip (avoid false positive like "tóm tắt 90 ngày")
