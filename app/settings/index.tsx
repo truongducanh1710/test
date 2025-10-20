@@ -4,7 +4,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { getHabitSettings, setHabitSettings, getPrivacySettings, setPrivacySettings } from '@/lib/settings';
+import { getHabitSettings, setHabitSettings, getPrivacySettings, setPrivacySettings, getPersonalitySettings, setPersonalitySettings } from '@/lib/settings';
 import { scheduleDailyHabitReminder } from '@/lib/notifications';
 import { useRouter } from 'expo-router';
 import { getCurrentUser, signOut } from '@/lib/auth';
@@ -20,6 +20,9 @@ export default function SettingsScreen() {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [privateMode, setPrivateMode] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [personaEnabled, setPersonaEnabled] = useState(true);
+  const [personaStyle, setPersonaStyle] = useState<'friendly_scold' | 'serious' | 'humor' | 'custom_angry'>('friendly_scold');
+  const [personaIntensity, setPersonaIntensity] = useState<'light' | 'medium' | 'hard'>('medium');
 
   useEffect(() => {
     (async () => {
@@ -30,6 +33,10 @@ export default function SettingsScreen() {
       setPrivateMode(!!ps.privateMode);
       const u = await getCurrentUser();
       setUserEmail(u?.email ?? null);
+      const pers = await getPersonalitySettings();
+      setPersonaEnabled(!!pers.enabled);
+      setPersonaStyle(pers.style);
+      setPersonaIntensity(pers.intensity);
     })();
   }, []);
 
@@ -37,6 +44,28 @@ export default function SettingsScreen() {
     setPrivateMode(val);
     await setPrivacySettings({ privateMode: val });
     Alert.alert('Đã lưu', val ? 'Bật chế độ riêng tư' : 'Tắt chế độ riêng tư');
+  };
+
+  const togglePersona = async (val: boolean) => {
+    setPersonaEnabled(val);
+    await setPersonalitySettings({ enabled: val, style: personaStyle, intensity: personaIntensity });
+    Alert.alert('Đã lưu', val ? 'Bật cá tính trợ lý' : 'Tắt cá tính trợ lý');
+  };
+
+  const cycleStyle = async () => {
+    const order: Array<'friendly_scold' | 'serious' | 'humor' | 'custom_angry'> = ['friendly_scold','serious','humor','custom_angry'];
+    const idx = order.indexOf(personaStyle);
+    const next = order[(idx + 1) % order.length];
+    setPersonaStyle(next);
+    await setPersonalitySettings({ enabled: personaEnabled, style: next, intensity: personaIntensity });
+  };
+
+  const cycleIntensity = async () => {
+    const order: Array<'light' | 'medium' | 'hard'> = ['light','medium','hard'];
+    const idx = order.indexOf(personaIntensity);
+    const next = order[(idx + 1) % order.length];
+    setPersonaIntensity(next);
+    await setPersonalitySettings({ enabled: personaEnabled, style: personaStyle, intensity: next });
   };
 
   const toggleHabit = async (val: boolean) => {
@@ -112,6 +141,34 @@ export default function SettingsScreen() {
           </ThemedView>
           <ThemedText style={{ opacity: 0.6, marginTop: 6, fontSize: 12 }}>
             Khi bật, các giao dịch mới mặc định là riêng tư (chỉ bạn thấy chi tiết).
+          </ThemedText>
+        </ThemedView>
+
+        {/* Assistant personality */}
+        <ThemedView style={styles.card}>
+          <ThemedText type="subtitle" style={{ marginBottom: 8 }}>Phong cách trợ lý</ThemedText>
+          <ThemedView style={styles.row}>
+            <ThemedText>Bật cá tính tuỳ chỉnh</ThemedText>
+            <Switch value={personaEnabled} onValueChange={togglePersona} trackColor={{ true: tint }} />
+          </ThemedView>
+          <ThemedView style={[styles.row, { marginTop: 8 }]}> 
+            <ThemedText>Kiểu</ThemedText>
+            <Pressable style={[styles.outlineBtn, { borderColor: tint }]} onPress={cycleStyle}>
+              <ThemedText style={{ color: tint, fontWeight: '700' }}>
+                {personaStyle === 'friendly_scold' ? 'Mắng yêu (bạn thân)' : personaStyle === 'serious' ? 'Nghiêm túc' : personaStyle === 'humor' ? 'Hài hước' : 'Gắt hơn' }
+              </ThemedText>
+            </Pressable>
+          </ThemedView>
+          <ThemedView style={[styles.row, { marginTop: 8 }]}> 
+            <ThemedText>Cường độ</ThemedText>
+            <Pressable style={[styles.outlineBtn, { borderColor: tint }]} onPress={cycleIntensity}>
+              <ThemedText style={{ color: tint, fontWeight: '700' }}>
+                {personaIntensity === 'light' ? 'Nhẹ' : personaIntensity === 'medium' ? 'Vừa' : 'Cứng'}
+              </ThemedText>
+            </Pressable>
+          </ThemedView>
+          <ThemedText style={{ opacity: 0.6, marginTop: 6, fontSize: 12 }}>
+            Phản hồi sẽ điều chỉnh giọng điệu theo lựa chọn của bạn.
           </ThemedText>
         </ThemedView>
 

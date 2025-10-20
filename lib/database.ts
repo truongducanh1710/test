@@ -26,6 +26,7 @@ export interface Transaction {
   date: string;
   type: 'income' | 'expense';
   source: 'manual' | 'ai'; // Để biết giao dịch được thêm thủ công hay AI
+  currency?: string; // ISO currency code, e.g., VND, USD
   // Family/Privacy (Supabase-first; optional in SQLite fallback)
   household_id?: string | null;
   owner_user_id?: string | null;
@@ -157,6 +158,10 @@ const validateTransaction = (transaction: Omit<Transaction, 'id' | 'created_at' 
   
   if (!['manual', 'ai'].includes(transaction.source)) {
     return 'Nguồn giao dịch không hợp lệ';
+  }
+
+  if (!transaction.currency || String(transaction.currency).trim().length === 0) {
+    return 'Tiền tệ không được để trống';
   }
   
   return null;
@@ -297,6 +302,7 @@ class DatabaseManager {
           date TEXT NOT NULL CHECK (date(date) IS NOT NULL),
         type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
         source TEXT NOT NULL CHECK (source IN ('manual', 'ai')),
+        currency TEXT NOT NULL DEFAULT 'VND',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
@@ -313,6 +319,13 @@ class DatabaseManager {
       
       for (const indexQuery of createIndexes) {
         await this.db.execAsync(indexQuery);
+      }
+
+      // Backfill migration: ensure currency column exists on older installs
+      try {
+        await this.db.execAsync("ALTER TABLE transactions ADD COLUMN currency TEXT NOT NULL DEFAULT 'VND'");
+      } catch (e) {
+        // ignore if column already exists
       }
 
       // Loans table (for local SQLite fallback)
@@ -528,10 +541,9 @@ class DatabaseManager {
     }
 
     try {
-    const { amount, description, category, date, type, source, is_private, household_id, owner_user_id } = transaction;
-      // Supabase-first
+    const { amount, description, category, date, type, source, currency, is_private, household_id, owner_user_id } = transaction;
+      // Supabase-first with graceful fallback to SQLite on permission/RLS/auth issues
       if (this.sb) {
-        // Ensure owner_user_id = auth.uid() for RLS
         try {
           const sb = getSupabase();
           const authUser = (await sb!.auth.getUser()).data.user;
@@ -543,28 +555,61 @@ class DatabaseManager {
             date,
             type,
             source,
+            currency: currency || 'VND',
             is_private: !!is_private,
             household_id: household_id || null,
             owner_user_id: owner,
           };
-          const { data, error } = await this.sb
+          let { data, error } = await this.sb
             .from('transactions')
             .insert(payload)
             .select('id')
             .single();
-          if (error) throw new DatabaseException('INSERT_FAILED', error.message as any);
-          const newId = data!.id as string;
-          databaseEvents.emit('transactions_changed');
-          return newId;
+          if (error) {
+            const msg = String((error as any)?.message || '')
+              .toLowerCase();
+            const isCurrencySchema = msg.includes('currency') && (msg.includes('schema') || msg.includes('column') || msg.includes('not find'));
+            if (isCurrencySchema) {
+              // Retry without currency column (server not migrated yet)
+              const payload2: any = { ...payload };
+              delete payload2.currency;
+              const retry = await this.sb
+                .from('transactions')
+                .insert(payload2)
+                .select('id')
+                .single();
+              if (!retry.error) {
+                const newId = retry.data!.id as string;
+                databaseEvents.emit('transactions_changed');
+                return newId;
+              }
+              // if still error, continue to normal handling
+              error = retry.error;
+            }
+            const isRls = msg.includes('permission denied') || msg.includes('row-level security') || msg.includes('no jwt') || msg.includes('auth');
+            if (!isRls) {
+              throw new DatabaseException('INSERT_FAILED', (error as any).message as any);
+            }
+            // fall through to SQLite insert below
+          } else {
+            const newId = data!.id as string;
+            databaseEvents.emit('transactions_changed');
+            return newId;
+          }
         } catch (e: any) {
-          throw e instanceof DatabaseException ? e : new DatabaseException('INSERT_FAILED', e?.message || 'Insert failed');
+          const msg = String(e?.message || '').toLowerCase();
+          const isRls = msg.includes('permission denied') || msg.includes('row-level security') || msg.includes('no jwt') || msg.includes('auth');
+          if (!isRls) {
+            throw e instanceof DatabaseException ? e : new DatabaseException('INSERT_FAILED', e?.message || 'Insert failed');
+          }
+          // else: fallback to SQLite below
         }
       }
 
       const result = await this.db!.runAsync(
-      `INSERT INTO transactions (amount, description, category, date, type, source) 
-       VALUES (?, ?, ?, ?, ?, ?)`,
-        [amount, description.trim(), category.trim(), date, type, source]
+      `INSERT INTO transactions (amount, description, category, date, type, source, currency) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [amount, description.trim(), category.trim(), date, type, source, currency || 'VND']
       );
 
       if (!result.lastInsertRowId) {
@@ -867,7 +912,8 @@ class DatabaseManager {
         category: t.category.trim(),
         date: t.date,
         type: t.type,
-        source: t.source
+        source: t.source,
+        currency: t.currency || 'VND'
       }));
       const { data, error } = await this.sb.from('transactions').insert(payload).select('id');
       if (error) throw new DatabaseException('BATCH_INSERT_ERROR', error.message as any);
@@ -879,11 +925,11 @@ class DatabaseManager {
     const ids: string[] = [];
     await this.db.withTransactionAsync(async () => {
       for (const transaction of transactions) {
-        const { amount, description, category, date, type, source } = transaction;
+        const { amount, description, category, date, type, source, currency } = transaction;
         const result = await this.db!.runAsync(
-          `INSERT INTO transactions (amount, description, category, date, type, source) 
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [amount, description, category, date, type, source]
+          `INSERT INTO transactions (amount, description, category, date, type, source, currency) 
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [amount, description, category, date, type, source, currency || 'VND']
         );
         ids.push(String(result.lastInsertRowId));
       }

@@ -446,11 +446,44 @@ export interface ChatMessage {
 }
 
 export async function chatFinance(messages: ChatMessage[], context: any): Promise<string> {
+  // Personality prompt from settings
+  let personalityBlock = '';
+  try {
+    const { getPersonalitySettings } = await import('@/lib/settings');
+    const pers = await getPersonalitySettings();
+    if (pers?.enabled) {
+      const tone =
+        pers.style === 'serious' ? 'giọng nghiêm túc, chuẩn mực, súc tích' :
+        pers.style === 'humor' ? 'giọng hài hước, nhẹ nhàng nhưng đúng trọng tâm' :
+        pers.style === 'custom_angry' ? 'giọng nghiêm khắc, thẳng thắn, không vòng vo (nhưng không thô lỗ)' :
+        'giọng “mắng yêu” kiểu bạn thân: thẳng mà ấm, có chút dí dỏm';
+      const intensity =
+        pers.intensity === 'hard' ? 'mức độ nhắc nhở cứng, phê bình rõ ràng, luôn đề xuất giải pháp cắt giảm ngay' :
+        pers.intensity === 'light' ? 'mức độ nhẹ nhàng, tập trung gợi ý tích cực' :
+        'mức độ vừa phải, cân bằng giữa nhắc nhở và động viên';
+      const styleRules = [
+        'Không dùng chữ in đậm (bold) trong phản hồi',
+        'Phản hồi NGẮN: tối đa 3 dòng hoặc 3 bullet ngắn',
+        'Dùng emoji phù hợp (tối đa 2) để tăng cảm xúc',
+        'Một thái độ rõ ràng; mở đầu trực diện, không vòng vo',
+        'Chi bất thường/vượt ngân sách: mắng yêu thẳng, kèm 1-2 giải pháp cụ thể',
+        'Tiết kiệm tốt: khen ngay, khuyến khích duy trì',
+        'Bất khả kháng: hỏi thăm trước rồi gợi ý cân đối lại',
+        'Tránh lặp lại số liệu thừa; ưu tiên con số quan trọng nhất',
+        'Không dùng từ đã được yêu cầu bỏ',
+      ].join('; ');
+      personalityBlock = `Giọng điệu: ${tone}. Cường độ: ${intensity}. Quy tắc: ${styleRules}. \n`;
+    }
+  } catch {}
+
   const system = `Bạn là trợ lý tài chính cá nhân, trả lời bằng tiếng Việt.\n` +
     `Giới hạn: chỉ trả lời về tài chính/ngân sách/giao dịch/tiết kiệm.\n` +
     `Nếu câu hỏi ngoài phạm vi, lịch sự từ chối và hướng lại chủ đề tài chính.\n` +
     `Khi đưa lời khuyên, dựa trên số liệu 90 ngày gần nhất trong context.\n` +
-    `Trả lời ngắn gọn, dùng gạch đầu dòng khi hữu ích.`;
+    `Không dùng chữ in đậm (bold) trong phản hồi.\n` +
+    `Nếu người dùng nhập dạng giao dịch ngắn (ví dụ: \'20k cà phê\'), hãy phản hồi 1-3 dòng theo giọng đã chọn: nhắc nhở/khen/hỏi thăm + 1-2 gợi ý thực hành.\n` +
+    `Trả lời ngắn gọn, ưu tiên gạch đầu dòng khi phù hợp.\n` +
+    personalityBlock;
 
   if (!isOpenAIConfigured()) {
     try {
@@ -486,4 +519,35 @@ export async function chatFinance(messages: ChatMessage[], context: any): Promis
   });
 
   return response.choices[0]?.message?.content?.trim() || '';
+}
+
+// Lightweight classifier: determine if a text expresses spending/income input
+export async function isTransactionIntent(text: string): Promise<boolean> {
+  const quickHeuristic = () => {
+    const s = text.toLowerCase();
+    // Obvious non-transaction intents
+    const nonIntents = ['tóm tắt', 'tối ưu', 'gợi ý', 'cảnh báo', 'điểm đáng chú ý', 'báo cáo', 'thống kê'];
+    if (nonIntents.some(k => s.includes(k))) return false;
+    // Money marker near numbers
+    const money = /(\d+([\.,]\d+)?\s*(đ|₫|vnd|vnđ|k|ngàn|nghìn|triệu|trieu|tr|m))|(([$€]|usd|eur)\s*\d+([\.,]\d+)?)/i;
+    return money.test(s);
+  };
+
+  if (!isOpenAIConfigured()) return quickHeuristic();
+
+  try {
+    const resp = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0,
+      max_tokens: 3,
+      messages: [
+        { role: 'system', content: 'You are a classifier. Reply exactly "yes" if the user text is entering spending/income transactions (like amounts with categories/descriptions or short notes to be saved as transactions). Reply "no" otherwise (questions like summarize, optimize, warning, etc.). Language may be Vietnamese or English.' },
+        { role: 'user', content: text }
+      ]
+    });
+    const out = resp.choices[0]?.message?.content?.trim().toLowerCase() || '';
+    return out.startsWith('y');
+  } catch {
+    return quickHeuristic();
+  }
 }

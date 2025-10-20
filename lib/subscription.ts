@@ -37,7 +37,9 @@ export async function startTrial(householdId: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function useAiQuota(householdId: string, feature: 'ai_advisor' = 'ai_advisor'): Promise<AiQuotaResult> {
+export type AiFeatureKey = 'ai_advisor' | 'chat_tx_save';
+
+export async function useAiQuota(householdId: string, feature: AiFeatureKey = 'ai_advisor'): Promise<AiQuotaResult> {
   const sb = getSupabase();
   if (!sb) throw new Error('Supabase chưa được cấu hình');
   const { data, error } = await sb.rpc('use_ai_quota', { p_household_id: householdId, p_feature: feature });

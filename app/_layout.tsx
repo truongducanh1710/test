@@ -2,6 +2,7 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
+import { Provider as PaperProvider } from 'react-native-paper';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import React, { useEffect, useState } from 'react';
@@ -28,17 +29,19 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-        <Stack.Screen name="auth" options={{ headerShown: false }} />
-        <Stack.Screen name="family/index" options={{ title: 'Gia đình' }} />
-        <Stack.Screen name="settings/index" options={{ title: 'Cài đặt' }} />
-        <Stack.Screen name="join" options={{ headerTitle: 'Tham gia gia đình' }} />
-        <Stack.Screen name="reset-password" options={{ headerTitle: 'Đặt lại mật khẩu' }} />
-        <Stack.Screen name="paywall" options={{ title: 'Nâng cấp Pro' }} />
-      </Stack>
-      <StatusBar style="auto" />
+      <PaperProvider>
+        <Stack>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+          <Stack.Screen name="auth" options={{ headerShown: false }} />
+          <Stack.Screen name="family/index" options={{ title: 'Gia đình' }} />
+          <Stack.Screen name="settings/index" options={{ title: 'Cài đặt' }} />
+          <Stack.Screen name="join" options={{ headerTitle: 'Tham gia gia đình' }} />
+          <Stack.Screen name="reset-password" options={{ headerTitle: 'Đặt lại mật khẩu' }} />
+          <Stack.Screen name="paywall" options={{ title: 'Nâng cấp Pro' }} />
+        </Stack>
+        <StatusBar style="auto" />
+      </PaperProvider>
     </ThemeProvider>
   );
 }

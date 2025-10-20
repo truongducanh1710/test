@@ -244,6 +244,7 @@ export default function AddTransactionScreen() {
         date: formData.date,
         type: formData.type,
         source: 'manual' as const,
+        currency: 'VND',
         is_private: isPrivate || !!privacy.privateMode,
         owner_user_id: user?.id || null,
         household_id: safeHouseholdId,
@@ -446,7 +447,7 @@ export default function AddTransactionScreen() {
         {/* Description */}
         <ThemedView style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Mô Tả</ThemedText>
-          <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}> 
+          <ThemedView style={[styles.inputContainer, { borderColor: tintColor + '30' }]}>
             <TextInput
               style={[styles.textInput, { color: textColor }]}
               placeholder="Gõ hoặc nhấn nút ghi âm. Ví dụ: “-45k cafe hôm qua”. Nhấn ✨ để tự điền."
@@ -547,7 +548,7 @@ export default function AddTransactionScreen() {
         {/* Category Picker Modal */}
         {showCategoryPicker && (
           <ThemedView style={styles.modal}>
-            <ThemedView style={[styles.modalContent, { backgroundColor }]}> 
+            <ThemedView style={[styles.modalContent, { backgroundColor }]}>
               <ThemedView style={styles.modalHeader}>
                 <ThemedText style={styles.modalTitle}>Chọn danh mục</ThemedText>
                 <Pressable onPress={() => setShowCategoryPicker(false)}>
@@ -617,7 +618,7 @@ export default function AddTransactionScreen() {
           style={[styles.cancelButton, { borderColor: tintColor }]}
           onPress={handleCancel}
         >
-          <ThemedText style={[styles.cancelButtonText, { color: tintColor }]}> 
+          <ThemedText style={[styles.cancelButtonText, { color: tintColor }]}>
             Hủy
           </ThemedText>
         </Pressable>

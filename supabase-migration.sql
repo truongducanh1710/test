@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS public.household_invites (
 ALTER TABLE public.transactions 
   ADD COLUMN IF NOT EXISTS household_id UUID REFERENCES public.households(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS owner_user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT false;
+  ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'VND' CHECK (char_length(currency) BETWEEN 3 AND 5);
 
 -- Create indexes for performance
 CREATE INDEX IF NOT EXISTS idx_transactions_household ON public.transactions(household_id);
