@@ -28,6 +28,7 @@ const { width, height } = Dimensions.get('window');
 export default function CameraScreen() {
   const [facing, setFacing] = useState<CameraType>('back');
   const [permission, requestPermission] = useCameraPermissions();
+  const [flashOn, setFlashOn] = useState(false);
   const [cameraState, setCameraState] = useState<CameraState>('idle');
   const [processingResult, setProcessingResult] = useState<ProcessingResult | null>(null);
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
@@ -77,6 +78,8 @@ export default function CameraScreen() {
   const toggleCameraFacing = () => {
     setFacing(current => (current === 'back' ? 'front' : 'back'));
   };
+
+  const toggleFlash = () => setFlashOn(v => !v);
 
   const takePicture = async () => {
     if (!cameraRef.current) return;
@@ -301,6 +304,7 @@ export default function CameraScreen() {
         style={styles.camera} 
         facing={facing}
         ref={cameraRef}
+        enableTorch={flashOn}
       >
         {/* Header */}
         <LinearGradient
@@ -312,9 +316,14 @@ export default function CameraScreen() {
               <Ionicons name="arrow-back" size={24} color="white" />
             </Pressable>
             <ThemedText style={styles.headerTitle}>📸 Quét Sao Kê Ngân Hàng</ThemedText>
-            <Pressable style={styles.headerButton} onPress={toggleCameraFacing}>
-              <Ionicons name="camera-reverse" size={24} color="white" />
-            </Pressable>
+            <View style={styles.headerRightRow}>
+              <Pressable style={styles.headerButton} onPress={toggleFlash}>
+                <Ionicons name={flashOn ? 'flash' : 'flash-off'} size={22} color="white" />
+              </Pressable>
+              <Pressable style={[styles.headerButton, { marginLeft: 8 }]} onPress={toggleCameraFacing}>
+                <Ionicons name="camera-reverse" size={24} color="white" />
+              </Pressable>
+            </View>
           </ThemedView>
         </LinearGradient>
 
@@ -336,26 +345,32 @@ export default function CameraScreen() {
             const top = (cameraLayout.height - frameH) / 2;
 
             return (
-              <ThemedView
-                style={[
-                  styles.scanningFrame,
-                  { top, left, width: frameW, height: frameH },
-                ]}
-              >
-                <ThemedView style={[styles.frameCorner, styles.frameCornerTopLeft]} />
-                <ThemedView style={[styles.frameCorner, styles.frameCornerTopRight]} />
-                <ThemedView style={[styles.frameCorner, styles.frameCornerBottomLeft]} />
-                <ThemedView style={[styles.frameCorner, styles.frameCornerBottomRight]} />
-                <ThemedView style={styles.instructionContainer}>
-                  <ThemedText style={styles.instructionTitle}>📱 Chụp Sao Kê</ThemedText>
-                  <ThemedText style={styles.instructionText}>
-                    Đặt toàn bộ sao kê trong khung
-                  </ThemedText>
-                  <ThemedText style={styles.instructionSubtext}>
-                    Tỷ lệ 9:16 • Ánh sáng tốt • Không bóng mờ
-                  </ThemedText>
+              <>
+                {/* Mask outside frame */}
+                <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: top, backgroundColor: 'rgba(0,0,0,0.65)' }} pointerEvents="none" />
+                <View style={{ position: 'absolute', top, left: 0, width: left, height: frameH, backgroundColor: 'rgba(0,0,0,0.65)' }} pointerEvents="none" />
+                <View style={{ position: 'absolute', top, right: 0, width: left, height: frameH, backgroundColor: 'rgba(0,0,0,0.65)' }} pointerEvents="none" />
+                <View style={{ position: 'absolute', top: top + frameH, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.65)' }} pointerEvents="none" />
+
+                {/* Frame */}
+                <ThemedView
+                  style={[
+                    styles.scanningFrame,
+                    { top, left, width: frameW, height: frameH },
+                  ]}
+                >
+                  <ThemedView style={[styles.frameCorner, styles.frameCornerTopLeft]} />
+                  <ThemedView style={[styles.frameCorner, styles.frameCornerTopRight]} />
+                  <ThemedView style={[styles.frameCorner, styles.frameCornerBottomLeft]} />
+                  <ThemedView style={[styles.frameCorner, styles.frameCornerBottomRight]} />
                 </ThemedView>
-              </ThemedView>
+
+                {/* Instructions above frame */}
+                <View style={[styles.tipAbove, { left, top: Math.max(12, top - 70), width: frameW }]}
+                >
+                  <ThemedText style={styles.instructionText}>Đặt toàn bộ tờ giấy trong khung • Tránh bóng/nhòe</ThemedText>
+                </View>
+              </>
             );
           })()}
         </View>
@@ -475,6 +490,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     backgroundColor: 'transparent',
   },
+  headerRightRow: { flexDirection: 'row', alignItems: 'center' },
   headerButton: {
     width: 44,
     height: 44,
@@ -566,6 +582,14 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.7)',
     fontSize: 13,
     textAlign: 'center',
+  },
+  tipAbove: {
+    position: 'absolute',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 10,
+    alignSelf: 'center',
   },
   bottomGradient: {
     position: 'absolute',

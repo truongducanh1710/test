@@ -214,6 +214,9 @@ export default function AssistantScreen() {
 
       <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: undefined })} keyboardVerticalOffset={84}>
         <View style={styles.inputRow}>
+          <TouchableOpacity style={[styles.cameraBtn, { borderColor: primary }]} onPress={() => router.push('/camera')}>
+            <ThemedText style={{ fontSize: 16 }}>📷</ThemedText>
+          </TouchableOpacity>
           <TextInput
             style={[styles.input, { color: textColor, borderColor: primary }]}
             placeholder="Nhập câu hỏi về tài chính…"
@@ -321,14 +324,14 @@ function parseTransactionsInline(input: string): DraftTx[] {
     drafts.push({ amount, currency, description: desc, category, date, type, hash });
   }
 
-  // group by category when same message has multiple of same category
+  // group by category when clearly same category; do NOT merge 'Khác'
   const grouped = new Map<string, DraftTx>();
   for (const d of drafts) {
-    const key = `${d.category}|${d.date}|${d.type}|${d.currency}`;
+    const canMerge = d.category && d.category !== 'Khác';
+    const key = canMerge ? `${d.category}|${d.date}|${d.type}|${d.currency}` : `${d.category}|${d.date}|${d.type}|${d.currency}|${d.description}`;
     const prev = grouped.get(key);
-    if (prev) {
+    if (prev && canMerge) {
       prev.amount += d.amount;
-      prev.description = prev.description; // keep first
       prev.hash = `${prev.amount}|${prev.date}|${prev.category}|${prev.description}`;
     } else {
       grouped.set(key, { ...d });
@@ -353,6 +356,7 @@ const styles = StyleSheet.create({
   msg: { padding: 10, borderRadius: 10, maxWidth: '85%' },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   input: { flex: 1, minHeight: 42, maxHeight: 120, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
+  cameraBtn: { width: 42, height: 42, borderWidth: 1, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   sendBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
 });
 

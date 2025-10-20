@@ -1226,13 +1226,35 @@ export const getTodayDateString = (): string => {
 export const getCategoryFromDescription = (description: string): string => {
   const lowerDesc = description.toLowerCase();
   
-  if (lowerDesc.includes('ăn') || lowerDesc.includes('food') || lowerDesc.includes('grab food') || lowerDesc.includes('bep')) {
+  if (
+    lowerDesc.includes('ăn') ||
+    lowerDesc.includes('uống') ||
+    lowerDesc.includes('nước') ||
+    lowerDesc.includes('cà phê') ||
+    lowerDesc.includes('ca phe') ||
+    lowerDesc.includes('coffee') ||
+    lowerDesc.includes('trà') ||
+    lowerDesc.includes('tra ') ||
+    lowerDesc.includes('food') ||
+    lowerDesc.includes('grab food') ||
+    lowerDesc.includes('bep')
+  ) {
     return 'Ăn uống';
   }
   if (lowerDesc.includes('xăng') || lowerDesc.includes('gas') || lowerDesc.includes('petrol')) {
     return 'Xăng xe';
   }
-  if (lowerDesc.includes('grab') || lowerDesc.includes('taxi') || lowerDesc.includes('bus')) {
+  if (
+    lowerDesc.includes('grab') ||
+    lowerDesc.includes('taxi') ||
+    lowerDesc.includes('bus') ||
+    lowerDesc.includes('gửi xe') ||
+    lowerDesc.includes('gui xe') ||
+    lowerDesc.includes('giu xe') ||
+    lowerDesc.includes('bãi xe') ||
+    lowerDesc.includes('bai xe') ||
+    lowerDesc.includes('parking')
+  ) {
     return 'Di chuyển';
   }
   if (lowerDesc.includes('atm') || lowerDesc.includes('rút tiền')) {
