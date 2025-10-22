@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, View, StyleSheet, ScrollView, Dimensions, Pressable, Animated } from 'react-native';
+import { Modal, View, StyleSheet, ScrollView, Dimensions, Pressable, Animated, PanResponder, BackHandler } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -25,6 +25,8 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
   const scrollRef = useRef<ScrollView | null>(null);
   const [selectedHour, setSelectedHour] = useState(Math.max(0, Math.min(23, Math.floor(initialHour))));
   const headerAnim = useRef(new Animated.Value(0)).current;
+  const sheetTranslateY = useRef(new Animated.Value(Dimensions.get('window').height)).current;
+  const overlayOpacity = useRef(new Animated.Value(0)).current;
 
   const hours = useMemo(() => Array.from({ length: 24 }, (_, i) => i), []);
 
@@ -35,6 +37,22 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
     setTimeout(() => {
       scrollRef.current?.scrollTo({ y: selectedHour * ITEM_HEIGHT, animated: false });
     }, 0);
+    // animate in
+    Animated.parallel([
+      Animated.timing(sheetTranslateY, { toValue: 0, duration: 280, useNativeDriver: true, easing: (t) => 1 - Math.pow(1 - t, 3) }), // easeOutCubic
+      Animated.timing(overlayOpacity, { toValue: 0.5, duration: 280, useNativeDriver: true })
+    ]).start(() => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    });
+    // back press handler (Android)
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (visible) {
+        closeWithAnimation();
+        return true;
+      }
+      return false;
+    });
+    return () => sub.remove();
   }, [visible, initialHour]);
 
   const animateHeader = () => {
@@ -54,7 +72,7 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       if (applyImmediately) {
         onSave(clamped);
-        onClose();
+        closeWithAnimation();
       }
     }
     // snap to exact
@@ -63,10 +81,41 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
 
   const containerHeight = Math.min(Dimensions.get('window').height * 0.65, 520);
 
+  const pan = useRef(new Animated.Value(0)).current; // track drag distance
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderMove: (_, g) => {
+        const dy = Math.max(0, g.dy);
+        sheetTranslateY.setValue(dy);
+      },
+      onPanResponderRelease: (_, g) => {
+        const threshold = containerHeight * 0.28; // ~28%
+        if (g.dy > threshold) {
+          closeWithAnimation();
+        } else {
+          Animated.timing(sheetTranslateY, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+        }
+      },
+    })
+  ).current;
+
+  const closeWithAnimation = () => {
+    Animated.parallel([
+      Animated.timing(sheetTranslateY, { toValue: containerHeight, duration: 240, useNativeDriver: true, easing: (t) => Math.pow(t, 3) }), // easeInCubic
+      Animated.timing(overlayOpacity, { toValue: 0, duration: 240, useNativeDriver: true })
+    ]).start(() => {
+      onClose();
+    });
+  };
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       {/* Overlay */}
-      <Pressable style={styles.overlay} onPress={onClose} />
+      <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]}>
+        <Pressable style={{ flex: 1 }} onPress={closeWithAnimation} />
+      </Animated.View>
 
       {/* Sheet */}
       <ThemedView style={[styles.sheet, { height: containerHeight, backgroundColor: bg }]}> 
@@ -74,7 +123,7 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
         <ThemedText style={{ textAlign: 'center', marginTop: 12, fontSize: 20, fontWeight: '700' }}>Chọn giờ nhắc</ThemedText>
 
         {/* Wheel (đưa lên ngay dưới header) */}
-        <View style={{ flex: 1, position: 'relative', marginTop: 8 }}>
+        <Animated.View {...panResponder.panHandlers} style={{ flex: 1, position: 'relative', marginTop: 8, transform: [{ translateY: sheetTranslateY }] }}>
           {/* Center highlight */}
           <View pointerEvents="none" style={[styles.centerHighlight, { borderColor: tint }]} />
           {/* Top/Bottom fade overlays */}
@@ -106,7 +155,7 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
               );
             })}
           </ScrollView>
-        </View>
+        </Animated.View>
 
         {/* Selected time - nhỏ gọn dưới scroller */}
         <Animated.View style={{
@@ -149,7 +198,7 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
         {/* Footer actions */}
         {!applyImmediately && (
           <View style={styles.footer}> 
-            <Pressable style={[styles.btn, { borderColor: '#6B7280' }]} onPress={onClose}><ThemedText style={{ color: '#6B7280', fontWeight: '700' }}>Huỷ</ThemedText></Pressable>
+            <Pressable style={[styles.btn, { borderColor: '#6B7280' }]} onPress={closeWithAnimation}><ThemedText style={{ color: '#6B7280', fontWeight: '700' }}>Huỷ</ThemedText></Pressable>
             <Pressable style={[styles.btn, { borderColor: tint }]} onPress={() => onSave(selectedHour)}><ThemedText style={{ color: tint, fontWeight: '700' }}>Lưu</ThemedText></Pressable>
           </View>
         )}
