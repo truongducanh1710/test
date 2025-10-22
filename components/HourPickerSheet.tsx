@@ -5,8 +5,10 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
 
-const ITEM_HEIGHT = 44;
-const VISIBLE_COUNT = 7; // odd number so center item is clear
+const ITEM_HEIGHT = 44; // used for vertical spacing of text box inside row
+const ITEM_WIDTH = 64; // width per hour item for horizontal scroller
+const WHEEL_HEIGHT = 112; // enlarged for easier interaction
+const VISIBLE_COUNT = 5; // visible items horizontally (center + 2 each side)
 
 export interface HourPickerSheetProps {
   visible: boolean;
@@ -23,8 +25,10 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
   const tint = useThemeColor({}, 'tint');
 
   const scrollRef = useRef<ScrollView | null>(null);
-  const [selectedHour, setSelectedHour] = useState(Math.max(0, Math.min(23, Math.floor(initialHour))));
+  const [selectedHour, setSelectedHour] = useState(Math.max(0, Math.min(23, Math.floor(initialHour)))); // persisted value
+  const [tempHour, setTempHour] = useState(Math.max(0, Math.min(23, Math.floor(initialHour)))); // in-sheet value
   const headerAnim = useRef(new Animated.Value(0)).current;
+  const scrollX = useRef(new Animated.Value(0)).current;
   const sheetTranslateY = useRef(new Animated.Value(Dimensions.get('window').height)).current;
   const overlayOpacity = useRef(new Animated.Value(0)).current;
 
@@ -32,18 +36,20 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
 
   useEffect(() => {
     if (!visible) return;
-    setSelectedHour(Math.max(0, Math.min(23, Math.floor(initialHour))));
-    // scroll to initial
+    // Sync temp state with current saved hour when opening
+    const openHour = Math.max(0, Math.min(23, Math.floor(initialHour)));
+    setTempHour(openHour);
+    // Scroll to saved hour position on open
     setTimeout(() => {
-      scrollRef.current?.scrollTo({ y: selectedHour * ITEM_HEIGHT, animated: false });
+      scrollRef.current?.scrollTo({ x: openHour * ITEM_WIDTH, animated: false });
     }, 0);
     // animate in
     Animated.parallel([
-      Animated.timing(sheetTranslateY, { toValue: 0, duration: 280, useNativeDriver: true, easing: (t) => 1 - Math.pow(1 - t, 3) }), // easeOutCubic
-      Animated.timing(overlayOpacity, { toValue: 0.5, duration: 280, useNativeDriver: true })
-    ]).start(() => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    });
+        Animated.timing(sheetTranslateY, { toValue: 0, duration: 280, useNativeDriver: true, easing: (t) => 1 - Math.pow(1 - t, 3) }),
+        Animated.timing(overlayOpacity, { toValue: 0.5, duration: 280, useNativeDriver: true })
+      ]).start(() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      });
     // back press handler (Android)
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (visible) {
@@ -63,20 +69,16 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
   };
 
   const onMomentumEnd = (e: any) => {
-    const y = e.nativeEvent.contentOffset.y;
-    const index = Math.round(y / ITEM_HEIGHT);
+    const x = e.nativeEvent.contentOffset.x;
+    const index = Math.round(x / ITEM_WIDTH);
     const clamped = Math.max(0, Math.min(23, index));
-    if (clamped !== selectedHour) {
-      setSelectedHour(clamped);
+    if (clamped !== tempHour) {
+      setTempHour(clamped);
       animateHeader();
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      if (applyImmediately) {
-        onSave(clamped);
-        closeWithAnimation();
-      }
     }
     // snap to exact
-    scrollRef.current?.scrollTo({ y: clamped * ITEM_HEIGHT, animated: true });
+    scrollRef.current?.scrollTo({ x: clamped * ITEM_WIDTH, animated: true });
   };
 
   const containerHeight = Math.min(Dimensions.get('window').height * 0.65, 520);
@@ -84,8 +86,12 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
   const pan = useRef(new Animated.Value(0)).current; // track drag distance
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponder: (_, g) => false,
+      onMoveShouldSetPanResponder: (_, g) => {
+        const vy = Math.abs(g.dy);
+        const vx = Math.abs(g.dx);
+        return vy > 6 && vy > vx; // only capture vertical drags
+      },
       onPanResponderMove: (_, g) => {
         const dy = Math.max(0, g.dy);
         sheetTranslateY.setValue(dy);
@@ -119,45 +125,54 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
 
       {/* Sheet (animate whole container) */}
       <Animated.View
-        {...panResponder.panHandlers}
         style={[styles.sheet, { height: containerHeight, backgroundColor: bg, transform: [{ translateY: sheetTranslateY }] }]}
       > 
         {/* Header */}
         <ThemedText style={{ textAlign: 'center', marginTop: 12, fontSize: 20, fontWeight: '700' }}>Chọn giờ nhắc</ThemedText>
 
         {/* Wheel (đưa lên ngay dưới header) */}
-        <View style={{ flex: 1, position: 'relative', marginTop: 8 }}>
+        <View style={{ height: WHEEL_HEIGHT, position: 'relative', marginTop: 36 }}>
+          {/* Drag handle area (captures vertical pan only) */}
+          <View {...panResponder.panHandlers} style={styles.dragArea}>
+            <View style={styles.dragBar} />
+          </View>
           {/* Center highlight */}
-          <View pointerEvents="none" style={[styles.centerHighlight, { borderColor: tint }]} />
-          {/* Top/Bottom fade overlays */}
-          <View pointerEvents="none" style={[styles.fadeTop]} />
-          <View pointerEvents="none" style={[styles.fadeBottom]} />
+        
 
-          <ScrollView
+          <Animated.ScrollView
             ref={scrollRef}
-            showsVerticalScrollIndicator={false}
-            snapToInterval={ITEM_HEIGHT}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            snapToInterval={ITEM_WIDTH}
             decelerationRate="fast"
             onMomentumScrollEnd={onMomentumEnd}
-            contentContainerStyle={{ paddingVertical: (ITEM_HEIGHT * ((VISIBLE_COUNT - 1) / 2)) }}
+            onScroll={Animated.event(
+              [{ nativeEvent: { contentOffset: { x: scrollX } } }],
+              { useNativeDriver: true }
+            )}
+            contentContainerStyle={{ paddingHorizontal: (Dimensions.get('window').width - ITEM_WIDTH) / 2 }}
           >
             {hours.map((h) => {
-              const isSelected = h === selectedHour;
+              const isSelected = h === tempHour;
+              const inputRange = [(h - 1) * ITEM_WIDTH, h * ITEM_WIDTH, (h + 1) * ITEM_WIDTH];
+              const scale = scrollX.interpolate({ inputRange, outputRange: [0.92, 1.08, 0.92], extrapolate: 'clamp' });
+              const opacity = scrollX.interpolate({ inputRange, outputRange: [0.5, 1, 0.5], extrapolate: 'clamp' });
               return (
-                <View key={h} style={[styles.item, { height: ITEM_HEIGHT }]}> 
-                  <ThemedText style={{
-                    fontSize: isSelected ? 22 : 18,
-                    fontWeight: isSelected ? '700' as const : '500' as const,
-                    opacity: isSelected ? 1 : 0.5,
-                    color: text,
-                    textAlign: 'center',
-                  }}>
-                    {String(h).padStart(2, '0')}:00
-                  </ThemedText>
-                </View>
+                <Pressable key={h} onPress={() => scrollRef.current?.scrollTo({ x: h * ITEM_WIDTH, animated: true })}>
+                  <Animated.View style={[styles.item, { width: ITEM_WIDTH, height: WHEEL_HEIGHT, paddingVertical: 12, transform: [{ scale }], opacity }]}> 
+                    <ThemedText style={{
+                      fontSize: isSelected ? 22 : 18,
+                      fontWeight: isSelected ? '700' as const : '500' as const,
+                      color: text,
+                      textAlign: 'center',
+                    }}>
+                      {String(h).padStart(2, '0')}:00
+                    </ThemedText>
+                  </Animated.View>
+                </Pressable>
               );
             })}
-          </ScrollView>
+          </Animated.ScrollView>
         </View>
 
         {/* Selected time - nhỏ gọn dưới scroller */}
@@ -166,14 +181,14 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
           opacity: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1] })
         }}>
           <ThemedText style={{ textAlign: 'center', color: tint, marginTop: 10, marginBottom: 8, fontSize: 16, fontWeight: '700' }}>
-            Giờ đã chọn: {String(selectedHour).padStart(2, '0')}:00
+            Giờ đã chọn: {String(tempHour).padStart(2, '0')}:00
           </ThemedText>
         </Animated.View>
 
         {/* Presets */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }} style={{ marginBottom: 12 }}>
           {presets.map((p) => {
-            const active = selectedHour === p.hour;
+            const active = tempHour === p.hour;
             return (
               <Pressable
                 key={p.label}
@@ -182,14 +197,10 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
                   { borderColor: active ? 'transparent' : tint, backgroundColor: active ? tint : 'transparent', height: 48 },
                 ]}
                 onPress={() => {
-                  setSelectedHour(p.hour);
-                  scrollRef.current?.scrollTo({ y: p.hour * ITEM_HEIGHT, animated: true });
+                  setTempHour(p.hour);
+                  scrollRef.current?.scrollTo({ x: p.hour * ITEM_WIDTH, animated: true });
                   Haptics.selectionAsync();
                   animateHeader();
-                  if (applyImmediately) {
-                    onSave(p.hour);
-                    onClose();
-                  }
                 }}
               >
                 <ThemedText style={{ color: active ? '#fff' : tint, fontWeight: '700' }}>{p.label}</ThemedText>
@@ -199,10 +210,11 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
         </ScrollView>
 
         {/* Footer actions */}
+        {/* Footer actions */}
         {!applyImmediately && (
           <View style={styles.footer}> 
             <Pressable style={[styles.btn, { borderColor: '#6B7280' }]} onPress={closeWithAnimation}><ThemedText style={{ color: '#6B7280', fontWeight: '700' }}>Huỷ</ThemedText></Pressable>
-            <Pressable style={[styles.btn, { borderColor: tint }]} onPress={() => onSave(selectedHour)}><ThemedText style={{ color: tint, fontWeight: '700' }}>Lưu</ThemedText></Pressable>
+            <Pressable style={[styles.btn, { borderColor: tint }]} onPress={() => { setSelectedHour(tempHour); onSave(tempHour); closeWithAnimation(); }}><ThemedText style={{ color: tint, fontWeight: '700' }}>Lưu</ThemedText></Pressable>
           </View>
         )}
       </Animated.View>
@@ -217,7 +229,7 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.4)'
+    backgroundColor: 'rgba(255,255,255,0.12)'
   },
   sheet: {
     position: 'absolute',
@@ -249,13 +261,24 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     zIndex: 2,
   },
+  centerHighlightH: {
+    position: 'absolute',
+    left: Dimensions.get('window').width / 2 - ITEM_WIDTH / 2,
+    top: WHEEL_HEIGHT / 2 - (ITEM_HEIGHT - 16) / 2,
+    width: ITEM_WIDTH,
+    height: ITEM_HEIGHT - 16,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    zIndex: 2,
+    borderRadius: 10,
+  },
+  
   fadeTop: {
     position: 'absolute',
     left: 0,
     right: 0,
     top: 0,
     height: (ITEM_HEIGHT * ((VISIBLE_COUNT - 1) / 2)) + 6,
-    backgroundColor: 'rgba(0,0,0,0.35)'
+    backgroundColor: 'rgba(255,255,255,0.12)'
   },
   fadeBottom: {
     position: 'absolute',
@@ -263,8 +286,9 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 60,
     height: (ITEM_HEIGHT * ((VISIBLE_COUNT - 1) / 2)) + 6,
-    backgroundColor: 'rgba(0,0,0,0.35)'
+    backgroundColor: 'rgba(255,255,255,0.12)'
   },
+
   footer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -279,5 +303,21 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderRadius: 10,
     marginHorizontal: 4,
-  }
+  },
+  dragArea: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 3,
+  },
+  dragBar: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.4)'
+  },
 });

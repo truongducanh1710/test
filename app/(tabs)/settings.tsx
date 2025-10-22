@@ -85,7 +85,7 @@ export default function SettingsTabScreen() {
           </ThemedView>
         </ThemedView>
 
-        <HourPickerSheet visible={showHourPicker} initialHour={hour} onClose={() => setShowHourPicker(false)} onSave={saveHour} applyImmediately />
+        <HourPickerSheet visible={showHourPicker} initialHour={hour} onClose={() => setShowHourPicker(false)} onSave={saveHour} />
 
       </ThemedView>
     </ScrollView>
