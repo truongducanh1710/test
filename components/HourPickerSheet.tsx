@@ -117,13 +117,16 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
         <Pressable style={{ flex: 1 }} onPress={closeWithAnimation} />
       </Animated.View>
 
-      {/* Sheet */}
-      <ThemedView style={[styles.sheet, { height: containerHeight, backgroundColor: bg }]}> 
+      {/* Sheet (animate whole container) */}
+      <Animated.View
+        {...panResponder.panHandlers}
+        style={[styles.sheet, { height: containerHeight, backgroundColor: bg, transform: [{ translateY: sheetTranslateY }] }]}
+      > 
         {/* Header */}
         <ThemedText style={{ textAlign: 'center', marginTop: 12, fontSize: 20, fontWeight: '700' }}>Chọn giờ nhắc</ThemedText>
 
         {/* Wheel (đưa lên ngay dưới header) */}
-        <Animated.View {...panResponder.panHandlers} style={{ flex: 1, position: 'relative', marginTop: 8, transform: [{ translateY: sheetTranslateY }] }}>
+        <View style={{ flex: 1, position: 'relative', marginTop: 8 }}>
           {/* Center highlight */}
           <View pointerEvents="none" style={[styles.centerHighlight, { borderColor: tint }]} />
           {/* Top/Bottom fade overlays */}
@@ -155,7 +158,7 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
               );
             })}
           </ScrollView>
-        </Animated.View>
+        </View>
 
         {/* Selected time - nhỏ gọn dưới scroller */}
         <Animated.View style={{
@@ -202,7 +205,7 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
             <Pressable style={[styles.btn, { borderColor: tint }]} onPress={() => onSave(selectedHour)}><ThemedText style={{ color: tint, fontWeight: '700' }}>Lưu</ThemedText></Pressable>
           </View>
         )}
-      </ThemedView>
+      </Animated.View>
     </Modal>
   );
 }
