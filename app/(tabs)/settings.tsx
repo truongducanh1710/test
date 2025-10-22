@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Pressable, Alert, Switch, Platform, ScrollView, TouchableOpacity, View } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { useThemeColor } from '@/hooks/use-theme-color';
@@ -8,8 +7,7 @@ import { getHabitSettings, setHabitSettings, getPrivacySettings, setPrivacySetti
 import { scheduleDailyHabitReminder } from '@/lib/notifications';
 import { useRouter } from 'expo-router';
 import { getCurrentUser, signOut } from '@/lib/auth';
-
-// Theme selection removed per request
+import { HourPickerSheet } from '@/components/HourPickerSheet';
 
 export default function SettingsTabScreen() {
   const router = useRouter();
@@ -19,10 +17,9 @@ export default function SettingsTabScreen() {
 
   const [enabled, setEnabled] = useState(false);
   const [hour, setHour] = useState(20);
-  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [showHourPicker, setShowHourPicker] = useState(false);
   const [privateMode, setPrivateMode] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  // Assistant personality removed per request
 
   useEffect(() => {
     (async () => {
@@ -33,15 +30,22 @@ export default function SettingsTabScreen() {
       setPrivateMode(!!ps.privateMode);
       const u = await getCurrentUser();
       setUserEmail(u?.email ?? null);
-      // Personality & theme loading removed per request
     })();
   }, []);
 
   const togglePrivateMode = async (val: boolean) => { setPrivateMode(val); await setPrivacySettings({ privateMode: val }); };
   const toggleHabit = async (val: boolean) => { setEnabled(val); await setHabitSettings({ enabled: val, hour }); if (val) { try { await scheduleDailyHabitReminder(hour); } catch {} } };
-  const onChangeTime = async (_: any, selected?: Date) => { setShowTimePicker(false); if (selected) { const newHour = selected.getHours(); setHour(newHour); await setHabitSettings({ enabled, hour: newHour }); if (enabled) { try { await scheduleDailyHabitReminder(newHour); } catch {} } } };
+
+  const saveHour = async (h: number) => {
+    setShowHourPicker(false);
+    setHour(h);
+    await setHabitSettings({ enabled, hour: h });
+    if (enabled) {
+      try { await scheduleDailyHabitReminder(h); } catch {}
+    }
+  };
+
   const handleSignOut = async () => { try { await signOut(); router.replace('/auth'); } catch (e: any) { Alert.alert('Lỗi', e?.message || 'Không thể đăng xuất'); } };
-  // Theme switching removed per request
 
   return (
     <ScrollView style={{ backgroundColor: bg }} contentContainerStyle={styles.containerScroll} showsVerticalScrollIndicator={false}>
@@ -70,16 +74,18 @@ export default function SettingsTabScreen() {
           <ThemedText style={{ opacity: 0.6, marginTop: 6, fontSize: 12 }}>Khi bật, các giao dịch mới mặc định là riêng tư (chỉ bạn thấy chi tiết).</ThemedText>
         </ThemedView>
 
-        {/* Assistant personality section removed */}
-
         <ThemedView style={styles.card}>
           <ThemedText type="subtitle" style={{ marginBottom: 8 }}>Nhắc nhở thói quen</ThemedText>
           <ThemedView style={styles.row}><ThemedText>Bật nhắc nhở hàng ngày</ThemedText><Switch value={enabled} onValueChange={toggleHabit} trackColor={{ true: tint }} /></ThemedView>
-          <ThemedView style={[styles.row, { marginTop: 8 }]}><ThemedText>Giờ nhắc</ThemedText><Pressable style={[styles.outlineBtn, { borderColor: tint }]} onPress={() => setShowTimePicker(true)}><ThemedText style={{ color: tint, fontWeight: '700' }}>{hour}:00</ThemedText></Pressable></ThemedView>
-          {showTimePicker && (<DateTimePicker value={new Date(2020,0,1,hour,0)} mode="time" display={Platform.OS==='ios'?'spinner':'default'} onChange={onChangeTime} />)}
+          <ThemedView style={[styles.row, { marginTop: 8 }]}>
+            <ThemedText>Giờ nhắc</ThemedText>
+            <Pressable style={[styles.outlineBtn, { borderColor: tint }]} onPress={() => setShowHourPicker(true)}>
+              <ThemedText style={{ color: tint, fontWeight: '700' }}>{String(hour).padStart(2, '0')}:00</ThemedText>
+            </Pressable>
+          </ThemedView>
         </ThemedView>
 
-        {/* Appearance (light/dark) section removed */}
+        <HourPickerSheet visible={showHourPicker} initialHour={hour} onClose={() => setShowHourPicker(false)} onSave={saveHour} />
 
       </ThemedView>
     </ScrollView>
