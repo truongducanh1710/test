@@ -57,28 +57,41 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
       {/* Sheet */}
       <ThemedView style={[styles.sheet, { height: containerHeight, backgroundColor: bg }]}> 
         {/* Header */}
-        <ThemedText type="title" style={{ textAlign: 'center', marginTop: 12 }}>Chọn giờ nhắc</ThemedText>
-        <ThemedText style={{ textAlign: 'center', opacity: 0.7, marginTop: 4, marginBottom: 8, fontSize: 18 }}>
-          {String(selectedHour).padStart(2, '0')}:00
+        <ThemedText style={{ textAlign: 'center', marginTop: 12, fontSize: 20, fontWeight: '700' }}>Chọn giờ nhắc</ThemedText>
+        <ThemedText style={{ textAlign: 'center', opacity: 0.7, marginTop: 6, marginBottom: 10, fontSize: 15 }}>
+          Giờ đã chọn: {String(selectedHour).padStart(2, '0')}:00
         </ThemedText>
 
         {/* Presets */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }} style={{ marginBottom: 8 }}>
-          {presets.map((p) => (
-            <Pressable key={p.label} style={[styles.preset, { borderColor: tint }]} onPress={() => {
-              setSelectedHour(p.hour);
-              scrollRef.current?.scrollTo({ y: p.hour * ITEM_HEIGHT, animated: true });
-              Haptics.selectionAsync();
-            }}>
-              <ThemedText style={{ color: tint, fontWeight: '700' }}>{p.label}</ThemedText>
-            </Pressable>
-          ))}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }} style={{ marginBottom: 12 }}>
+          {presets.map((p) => {
+            const active = selectedHour === p.hour;
+            return (
+              <Pressable
+                key={p.label}
+                style={[
+                  styles.preset,
+                  { borderColor: active ? 'transparent' : tint, backgroundColor: active ? tint : 'transparent', height: 48 },
+                ]}
+                onPress={() => {
+                  setSelectedHour(p.hour);
+                  scrollRef.current?.scrollTo({ y: p.hour * ITEM_HEIGHT, animated: true });
+                  Haptics.selectionAsync();
+                }}
+              >
+                <ThemedText style={{ color: active ? '#fff' : tint, fontWeight: '700' }}>{p.label}</ThemedText>
+              </Pressable>
+            );
+          })}
         </ScrollView>
 
         {/* Wheel */}
         <View style={{ flex: 1, position: 'relative' }}>
           {/* Center highlight */}
           <View pointerEvents="none" style={[styles.centerHighlight, { borderColor: tint }]} />
+          {/* Top/Bottom fade overlays */}
+          <View pointerEvents="none" style={[styles.fadeTop]} />
+          <View pointerEvents="none" style={[styles.fadeBottom]} />
 
           <ScrollView
             ref={scrollRef}
@@ -131,16 +144,16 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     overflow: 'hidden'
   },
   preset: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
     borderWidth: 1,
     borderRadius: 12,
-    marginRight: 8,
+    marginRight: 12,
   },
   item: {
     justifyContent: 'center',
@@ -156,10 +169,28 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     zIndex: 2,
   },
+  fadeTop: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    height: (ITEM_HEIGHT * ((VISIBLE_COUNT - 1) / 2)) + 6,
+    backgroundColor: 'rgba(0,0,0,0.35)'
+  },
+  fadeBottom: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 60,
+    height: (ITEM_HEIGHT * ((VISIBLE_COUNT - 1) / 2)) + 6,
+    backgroundColor: 'rgba(0,0,0,0.35)'
+  },
   footer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 16,
   },
   btn: {
     flex: 1,
