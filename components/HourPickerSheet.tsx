@@ -72,45 +72,9 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
       <ThemedView style={[styles.sheet, { height: containerHeight, backgroundColor: bg }]}> 
         {/* Header */}
         <ThemedText style={{ textAlign: 'center', marginTop: 12, fontSize: 20, fontWeight: '700' }}>Chọn giờ nhắc</ThemedText>
-        <Animated.View style={{
-          transform: [{ scale: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.02] }) }],
-          opacity: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1] })
-        }}>
-          <ThemedText style={{ textAlign: 'center', color: tint, marginTop: 6, marginBottom: 10, fontSize: 17, fontWeight: '700' }}>
-            Giờ đã chọn: {String(selectedHour).padStart(2, '0')}:00
-          </ThemedText>
-        </Animated.View>
 
-        {/* Presets */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }} style={{ marginBottom: 12 }}>
-          {presets.map((p) => {
-            const active = selectedHour === p.hour;
-            return (
-              <Pressable
-                key={p.label}
-                style={[
-                  styles.preset,
-                  { borderColor: active ? 'transparent' : tint, backgroundColor: active ? tint : 'transparent', height: 48 },
-                ]}
-                onPress={() => {
-                  setSelectedHour(p.hour);
-                  scrollRef.current?.scrollTo({ y: p.hour * ITEM_HEIGHT, animated: true });
-                  Haptics.selectionAsync();
-                  animateHeader();
-                  if (applyImmediately) {
-                    onSave(p.hour);
-                    onClose();
-                  }
-                }}
-              >
-                <ThemedText style={{ color: active ? '#fff' : tint, fontWeight: '700' }}>{p.label}</ThemedText>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        {/* Wheel */}
-        <View style={{ flex: 1, position: 'relative' }}>
+        {/* Wheel (đưa lên ngay dưới header) */}
+        <View style={{ flex: 1, position: 'relative', marginTop: 8 }}>
           {/* Center highlight */}
           <View pointerEvents="none" style={[styles.centerHighlight, { borderColor: tint }]} />
           {/* Top/Bottom fade overlays */}
@@ -143,6 +107,44 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
             })}
           </ScrollView>
         </View>
+
+        {/* Selected time - nhỏ gọn dưới scroller */}
+        <Animated.View style={{
+          transform: [{ scale: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.02] }) }],
+          opacity: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1] })
+        }}>
+          <ThemedText style={{ textAlign: 'center', color: tint, marginTop: 10, marginBottom: 8, fontSize: 16, fontWeight: '700' }}>
+            Giờ đã chọn: {String(selectedHour).padStart(2, '0')}:00
+          </ThemedText>
+        </Animated.View>
+
+        {/* Presets */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }} style={{ marginBottom: 12 }}>
+          {presets.map((p) => {
+            const active = selectedHour === p.hour;
+            return (
+              <Pressable
+                key={p.label}
+                style={[
+                  styles.preset,
+                  { borderColor: active ? 'transparent' : tint, backgroundColor: active ? tint : 'transparent', height: 48 },
+                ]}
+                onPress={() => {
+                  setSelectedHour(p.hour);
+                  scrollRef.current?.scrollTo({ y: p.hour * ITEM_HEIGHT, animated: true });
+                  Haptics.selectionAsync();
+                  animateHeader();
+                  if (applyImmediately) {
+                    onSave(p.hour);
+                    onClose();
+                  }
+                }}
+              >
+                <ThemedText style={{ color: active ? '#fff' : tint, fontWeight: '700' }}>{p.label}</ThemedText>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
 
         {/* Footer actions */}
         {!applyImmediately && (
