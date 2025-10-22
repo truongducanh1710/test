@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, View, StyleSheet, ScrollView, Dimensions, Pressable } from 'react-native';
+import { Modal, View, StyleSheet, ScrollView, Dimensions, Pressable, Animated } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -14,15 +14,17 @@ export interface HourPickerSheetProps {
   onClose: () => void;
   onSave: (hour: number) => void;
   presets?: Array<{ label: string; hour: number }>; // e.g. [{label:'Sáng 6:00', hour:6}]
+  applyImmediately?: boolean; // when true, save+close on snap/preset
 }
 
-export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, presets = [{ label: 'Sáng 6:00', hour: 6 }, { label: 'Trưa 12:00', hour: 12 }, { label: 'Tối 21:00', hour: 21 }] }: HourPickerSheetProps) {
+export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, presets = [{ label: 'Sáng 6:00', hour: 6 }, { label: 'Trưa 12:00', hour: 12 }, { label: 'Tối 21:00', hour: 21 }], applyImmediately = false }: HourPickerSheetProps) {
   const text = useThemeColor({}, 'text');
   const bg = useThemeColor({}, 'background');
   const tint = useThemeColor({}, 'tint');
 
   const scrollRef = useRef<ScrollView | null>(null);
   const [selectedHour, setSelectedHour] = useState(Math.max(0, Math.min(23, Math.floor(initialHour))));
+  const headerAnim = useRef(new Animated.Value(0)).current;
 
   const hours = useMemo(() => Array.from({ length: 24 }, (_, i) => i), []);
 
@@ -35,13 +37,25 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
     }, 0);
   }, [visible, initialHour]);
 
+  const animateHeader = () => {
+    headerAnim.setValue(0);
+    Animated.parallel([
+      Animated.timing(headerAnim, { toValue: 1, duration: 150, useNativeDriver: true })
+    ]).start();
+  };
+
   const onMomentumEnd = (e: any) => {
     const y = e.nativeEvent.contentOffset.y;
     const index = Math.round(y / ITEM_HEIGHT);
     const clamped = Math.max(0, Math.min(23, index));
     if (clamped !== selectedHour) {
       setSelectedHour(clamped);
+      animateHeader();
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      if (applyImmediately) {
+        onSave(clamped);
+        onClose();
+      }
     }
     // snap to exact
     scrollRef.current?.scrollTo({ y: clamped * ITEM_HEIGHT, animated: true });
@@ -58,9 +72,14 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
       <ThemedView style={[styles.sheet, { height: containerHeight, backgroundColor: bg }]}> 
         {/* Header */}
         <ThemedText style={{ textAlign: 'center', marginTop: 12, fontSize: 20, fontWeight: '700' }}>Chọn giờ nhắc</ThemedText>
-        <ThemedText style={{ textAlign: 'center', opacity: 0.7, marginTop: 6, marginBottom: 10, fontSize: 15 }}>
-          Giờ đã chọn: {String(selectedHour).padStart(2, '0')}:00
-        </ThemedText>
+        <Animated.View style={{
+          transform: [{ scale: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.02] }) }],
+          opacity: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1] })
+        }}>
+          <ThemedText style={{ textAlign: 'center', color: tint, marginTop: 6, marginBottom: 10, fontSize: 17, fontWeight: '700' }}>
+            Giờ đã chọn: {String(selectedHour).padStart(2, '0')}:00
+          </ThemedText>
+        </Animated.View>
 
         {/* Presets */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }} style={{ marginBottom: 12 }}>
@@ -77,6 +96,11 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
                   setSelectedHour(p.hour);
                   scrollRef.current?.scrollTo({ y: p.hour * ITEM_HEIGHT, animated: true });
                   Haptics.selectionAsync();
+                  animateHeader();
+                  if (applyImmediately) {
+                    onSave(p.hour);
+                    onClose();
+                  }
                 }}
               >
                 <ThemedText style={{ color: active ? '#fff' : tint, fontWeight: '700' }}>{p.label}</ThemedText>
@@ -121,10 +145,12 @@ export function HourPickerSheet({ visible, initialHour = 20, onClose, onSave, pr
         </View>
 
         {/* Footer actions */}
-        <View style={styles.footer}> 
-          <Pressable style={[styles.btn, { borderColor: '#6B7280' }]} onPress={onClose}><ThemedText style={{ color: '#6B7280', fontWeight: '700' }}>Huỷ</ThemedText></Pressable>
-          <Pressable style={[styles.btn, { borderColor: tint }]} onPress={() => onSave(selectedHour)}><ThemedText style={{ color: tint, fontWeight: '700' }}>Lưu</ThemedText></Pressable>
-        </View>
+        {!applyImmediately && (
+          <View style={styles.footer}> 
+            <Pressable style={[styles.btn, { borderColor: '#6B7280' }]} onPress={onClose}><ThemedText style={{ color: '#6B7280', fontWeight: '700' }}>Huỷ</ThemedText></Pressable>
+            <Pressable style={[styles.btn, { borderColor: tint }]} onPress={() => onSave(selectedHour)}><ThemedText style={{ color: tint, fontWeight: '700' }}>Lưu</ThemedText></Pressable>
+          </View>
+        )}
       </ThemedView>
     </Modal>
   );
